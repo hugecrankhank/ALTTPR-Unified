@@ -20,7 +20,7 @@
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
     font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  body { display: grid; grid-template-rows: auto 1fr; }
+  body { display: grid; grid-template-rows: auto auto 1fr; }
 
   header { padding-top: max(10px, env(safe-area-inset-top)) !important;
     padding-left: max(16px, env(safe-area-inset-left)) !important; padding-right: max(16px, env(safe-area-inset-right)) !important; }
@@ -40,6 +40,32 @@
   #pad-status.on i { background: var(--accent); }
   #link-status.live i { background: var(--accent); }
   #link-status.snap i { background: var(--warn); }
+
+  /* ── randomizer bar ── */
+  #rando-bar { display: none; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; padding: 8px 16px 10px;
+    padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right));
+    border-bottom: 1px solid var(--line); background: #11161d; }
+  body.rando-open #rando-bar { display: flex; }
+  #rando-bar label.f { display: flex; flex-direction: column; gap: 3px; color: var(--dim); font-size: 11px;
+    text-transform: uppercase; letter-spacing: .04em; }
+  #rando-bar label.f select, #rando-bar label.f input { text-transform: none; letter-spacing: 0; }
+  #rando-bar input[type=text] { background: #0d1117; color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 13px; width: 9em; }
+  #rando-bar .group { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; }
+  #rando-bar details { color: var(--dim); font-size: 12px; align-self: center; }
+  #rando-bar details[open] { flex-basis: 100%; }
+  #rando-bar details summary { cursor: pointer; }
+  #rando-bar details .group { margin-top: 6px; }
+  #rando-bar .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  #r-generate { background: #1f6f3a; border-color: #2a8a4a; font-weight: 600; }
+  #r-generate:disabled { opacity: .6; cursor: progress; }
+  #r-base-label.ok { color: var(--accent); }
+  #r-base-input { display: none; }
+  #r-status { font-size: 12px; color: var(--dim); }
+  #r-status.ok { color: var(--accent); }
+  #r-status.bad { color: var(--bad); }
+  #r-seed-out { font-size: 12px; color: var(--dim); user-select: all; }
+  #r-toggle[aria-expanded=true] { border-color: var(--accent); }
 
   main { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-height: 0; }
   #game-wrap { position: relative; min-height: 0; display: flex; align-items: center; justify-content: center;
@@ -69,6 +95,9 @@
      aspect ratio, item tracker scaled to the screen width, then both maps
      stacked full-width so markers stay big enough to tap. */
   @media (max-width: 900px) {
+    #rando-bar label.f { flex: 1 1 42%; }
+    #rando-bar label.f select, #rando-bar label.f input { width: 100%; }
+    #rando-bar .group { flex-basis: 100%; }
     html, body { height: auto; }
     body { display: block; }
     main { display: block; }
@@ -83,7 +112,8 @@
 <body>
 <header>
   <h1>ALTTPR <span>Unified</span></h1>
-  <label class="filebtn primary" for="rom-input">Load ROM…</label>
+  <button id="r-toggle" aria-expanded="false" aria-controls="rando-bar" title="Show or hide the randomizer settings">Randomizer</button>
+  <label class="filebtn" for="rom-input" title="Play a seed you already have (.sfc)">Load ROM…</label>
   <!-- No `accept` filter: iOS doesn't know the .sfc/.smc types and would gray
        the files out. The ROM is checked in JS after it's picked instead. -->
   <input type="file" id="rom-input">
@@ -110,13 +140,143 @@
   <div id="link-status"><i></i><span>No game loaded</span></div>
 </header>
 
+<section id="rando-bar" aria-label="Randomizer settings">
+  <div class="group">
+    <label class="f">World state
+      <select id="r-mode">
+        <option value="standard">Standard</option>
+        <option value="open" selected>Open</option>
+        <option value="inverted">Inverted</option>
+        <option value="retro">Retro</option>
+      </select>
+    </label>
+    <label class="f">Goal
+      <select id="r-goal">
+        <option value="ganon" selected>Defeat Ganon</option>
+        <option value="fast_ganon">Fast Ganon</option>
+        <option value="dungeons">All Dungeons</option>
+        <option value="pedestal">Master Sword Pedestal</option>
+        <option value="triforce-hunt">Triforce Pieces</option>
+        <option value="ganonhunt">Ganonhunt</option>
+        <option value="completionist">Completionist</option>
+      </select>
+    </label>
+    <label class="f">Open tower
+      <select id="r-tower">
+        <option value="0">0 Crystals</option><option value="1">1 Crystal</option><option value="2">2 Crystals</option>
+        <option value="3">3 Crystals</option><option value="4">4 Crystals</option><option value="5">5 Crystals</option>
+        <option value="6">6 Crystals</option><option value="7" selected>7 Crystals</option><option value="random">Random</option>
+      </select>
+    </label>
+    <label class="f">Ganon vulnerable
+      <select id="r-ganon">
+        <option value="0">0 Crystals</option><option value="1">1 Crystal</option><option value="2">2 Crystals</option>
+        <option value="3">3 Crystals</option><option value="4">4 Crystals</option><option value="5">5 Crystals</option>
+        <option value="6">6 Crystals</option><option value="7" selected>7 Crystals</option><option value="random">Random</option>
+      </select>
+    </label>
+    <label class="f">Swords
+      <select id="r-weapons">
+        <option value="randomized" selected>Randomized</option>
+        <option value="assured">Assured</option>
+        <option value="vanilla">Vanilla</option>
+        <option value="swordless">Swordless</option>
+      </select>
+    </label>
+    <label class="f">Dungeon items
+      <select id="r-dungeon">
+        <option value="standard" selected>Standard</option>
+        <option value="mc">Maps/Compasses</option>
+        <option value="mcs">Maps/Compasses/Small Keys</option>
+        <option value="full">Keysanity</option>
+      </select>
+    </label>
+    <label class="f">Item placement
+      <select id="r-placement">
+        <option value="basic">Basic</option>
+        <option value="advanced" selected>Advanced</option>
+      </select>
+    </label>
+    <label class="f">Accessibility
+      <select id="r-access">
+        <option value="items" selected>100% Inventory</option>
+        <option value="locations">100% Locations</option>
+        <option value="none">Beatable Only</option>
+      </select>
+    </label>
+    <label class="f">Item pool
+      <select id="r-pool">
+        <option value="easy">Easy</option>
+        <option value="normal" selected>Normal</option>
+        <option value="hard">Hard</option>
+        <option value="expert">Expert</option>
+      </select>
+    </label>
+    <label class="f">Item functionality
+      <select id="r-func">
+        <option value="easy">Easy</option>
+        <option value="normal" selected>Normal</option>
+        <option value="hard">Hard</option>
+        <option value="expert">Expert</option>
+      </select>
+    </label>
+    <label class="f">Hints
+      <select id="r-hints">
+        <option value="on" selected>On</option>
+        <option value="off">Off</option>
+      </select>
+    </label>
+    <label class="f">Seed
+      <input type="text" id="r-seed" placeholder="random" inputmode="numeric" autocomplete="off" spellcheck="false">
+    </label>
+  </div>
+  <details>
+    <summary>ROM options</summary>
+    <div class="group">
+      <label class="f">Heart beep
+        <select id="r-heartbeep">
+          <option value="normal">Normal</option>
+          <option value="half" selected>Half speed</option>
+          <option value="quarter">Quarter speed</option>
+          <option value="double">Double speed</option>
+          <option value="off">Off</option>
+        </select>
+      </label>
+      <label class="f">Menu speed
+        <select id="r-menuspeed">
+          <option value="slow">Slow</option>
+          <option value="normal" selected>Normal</option>
+          <option value="fast">Fast</option>
+          <option value="instant">Instant</option>
+        </select>
+      </label>
+      <label class="f">Item quickswap
+        <select id="r-quickswap">
+          <option value="off" selected>Off</option>
+          <option value="on">On</option>
+        </select>
+      </label>
+    </div>
+  </details>
+  <div class="actions">
+    <label class="filebtn" id="r-base-label" for="r-base-input">Base ROM…</label>
+    <input type="file" id="r-base-input">
+    <button id="r-generate">Generate &amp; Play</button>
+    <button id="r-download" hidden>Download ROM</button>
+    <button id="r-spoiler" hidden>Spoiler</button>
+    <span id="r-seed-out"></span>
+    <span id="r-status" role="status" aria-live="polite"></span>
+  </div>
+</section>
+
 <main>
   <div id="game-wrap">
     <div id="game"></div>
     <div id="placeholder">
-      <h2>Load a randomized ROM to start</h2>
-      <p>Generate a seed at <a href="https://alttpr.com/en/randomizer" target="_blank" rel="noopener">alttpr.com</a>
-         using your own Japanese 1.0 ALttP ROM, download the patched <code>.sfc</code>, then load it here.
+      <h2>Generate a seed to start</h2>
+      <p>Pick your settings in the <b>Randomizer</b> bar above, choose your own Japanese 1.0 ALttP ROM
+         with <b>Base ROM…</b> (once), then press <b>Generate &amp; Play</b>.
+         Already have a seed <code>.sfc</code>? Use <b>Load ROM…</b> instead.
          The tracker on the right updates automatically as you play.</p>
       <p style="font-size:12px">Everything runs in your browser. Your ROM is never uploaded.</p>
     </div>
@@ -147,12 +307,26 @@
   $('gamemode').value = saved.gamemode || 'open';
   $('dungeonitems').value = saved.dungeonitems || 'standard';
 
+  // Extra tracker flags known when the seed was generated in-app (swordless,
+  // GT crystal requirement). Cleared when a ROM is loaded from a file.
+  var trackerExtra = saved.extra || null;
+  function saveSettings() {
+    localStorage.setItem('unified-settings', JSON.stringify({
+      gamemode: $('gamemode').value, dungeonitems: $('dungeonitems').value, extra: trackerExtra }));
+  }
   function trackerUrls() {
     var gm = $('gamemode').value, di = $('dungeonitems').value;
     var common = '&gamemode=' + gm + '&dungeonitems=' + di + '&bg=black';
+    var mapExtra = '';
+    if (trackerExtra) {
+      // seeds from the in-app generator never shuffle bosses or enemies
+      mapExtra = '&swordless=' + encodeURIComponent(trackerExtra.swordless || 'no')
+        + '&gtcrystals=' + encodeURIComponent(trackerExtra.gtcrystals || '7')
+        + '&bossshuffle=no&enemizer=no';
+    }
     return {
-      items: 'tracker/itemtracker.html?scale=1' + common,
-      map: 'tracker/map.html?zoom=0.6&logic=nmg&entranceshuffle=no&entrancemode=none' + common,
+      items: 'tracker/itemtracker.html?scale=1' + common + (trackerExtra ? '&swordless=' + encodeURIComponent(trackerExtra.swordless || 'no') + '&bossshuffle=no' : ''),
+      map: 'tracker/map.html?zoom=0.6&logic=nmg&entranceshuffle=no&entrancemode=none' + common + mapExtra,
     };
   }
   function loadTrackers() {
@@ -162,8 +336,7 @@
   }
   ['gamemode', 'dungeonitems'].forEach(function (id) {
     $(id).addEventListener('change', function () {
-      localStorage.setItem('unified-settings', JSON.stringify({
-        gamemode: $('gamemode').value, dungeonitems: $('dungeonitems').value }));
+      saveSettings();
       loadTrackers();
     });
   });
@@ -415,15 +588,72 @@
       if (!confirm('"' + file.name + '" doesn\'t look like a SNES ROM. Load it anyway?')) return;
     }
     if (window.EJS_emulator) {
-      // EmulatorJS doesn't support swapping games in place; reload with the
-      // new file is simplest. Stash it so the reload can pick it up.
       if (!confirm('Load a different ROM? The current game will be closed.')) return;
-      location.reload();
+    }
+    // A seed from elsewhere: we don't know its flags, so drop the extras and
+    // go back to the World / Dungeon items selectors.
+    trackerExtra = null;
+    saveSettings();
+    startRom(bytes, file.name, true);
+  });
+
+  // EmulatorJS can't swap games in place. If one is running, stash the ROM
+  // in IndexedDB, reload, and boot it from there on the next page load.
+  function startRom(bytes, name, reloadTrackers) {
+    if (window.EJS_emulator) {
+      stashRom(bytes, name).then(function () { location.reload(); }, function (e) {
+        alert('Could not hand the ROM over to a fresh emulator: ' + e);
+      });
       return;
     }
-    AlttpBridge.setRom(bytes, file.name);
-    bootEmulator(file);
+    if (reloadTrackers) loadTrackers();
+    AlttpBridge.setRom(bytes, name);
+    bootEmulator(new File([bytes], name, { type: 'application/octet-stream' }));
+  }
+  function idbOpen() {
+    return new Promise(function (resolve, reject) {
+      var r = indexedDB.open('alttpr-unified', 1);
+      r.onupgradeneeded = function () { r.result.createObjectStore('kv'); };
+      r.onsuccess = function () { resolve(r.result); };
+      r.onerror = function () { reject(r.error); };
+    });
+  }
+  function stashRom(bytes, name) {
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction('kv', 'readwrite');
+        tx.objectStore('kv').put({ bytes: bytes, name: name }, 'pending-rom');
+        tx.oncomplete = function () { resolve(); };
+        tx.onerror = function () { reject(tx.error); };
+      });
+    });
+  }
+  function takeStashedRom() {
+    return idbOpen().then(function (db) {
+      return new Promise(function (resolve) {
+        var tx = db.transaction('kv', 'readwrite'), st = tx.objectStore('kv');
+        var g = st.get('pending-rom');
+        g.onsuccess = function () { if (g.result) st.delete('pending-rom'); resolve(g.result || null); };
+        g.onerror = function () { resolve(null); };
+      });
+    }).catch(function () { return null; });
+  }
+  takeStashedRom().then(function (p) {
+    if (p && p.bytes && !window.EJS_emulator) startRom(new Uint8Array(p.bytes), p.name, false);
   });
+
+  // Used by the randomizer bar (randomizer/app.js).
+  window.UnifiedApp = {
+    playRom: function (bytes, name, tracker) {
+      if (tracker) {
+        if (tracker.gamemode && [].some.call($('gamemode').options, function (o) { return o.value === tracker.gamemode; })) $('gamemode').value = tracker.gamemode;
+        if (tracker.dungeonitems) $('dungeonitems').value = tracker.dungeonitems;
+        trackerExtra = { swordless: tracker.swordless || 'no', gtcrystals: tracker.gtcrystals || '7' };
+        saveSettings();
+      }
+      startRom(bytes, name, true);
+    },
+  };
 
   // ── volume that works on iPhone/iPad ──────────────────────────────────────
   // EmulatorJS's slider only sets the gain on audio sources that exist at that
@@ -493,6 +723,10 @@
     document.body.appendChild(s);
   }
 })();
+</script>
+<script type="module">
+  import { init } from './randomizer/app.js';
+  init();
 </script>
 </body>
 </html>
