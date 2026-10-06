@@ -123,6 +123,11 @@ body {
 #dw { background-image: url('map/map_dw.png'); }
 
 /* ── Check dots ── */
+/* Below 75% map zoom the markers shrink with the map (--mk, set by applyZoom;
+   Chris, Oct 2026). CSS zoom rather than width/height: one rule covers every
+   marker type and everything drawn inside them, and they stay centred on
+   their spot. */
+.dot, .dng, .shop-marker, .bonk-dot, .ent-marker, .ent-label { zoom: var(--mk, 1); }
 .dot {
   position: absolute;
   width: 18px; height: 18px;
@@ -7936,6 +7941,8 @@ function applyZoom(initial) {
     el.style.height = size + 'px';
   });
   document.getElementById('zoom-label').textContent = pct + '%';
+  // Markers keep their size down to 75%, then shrink with the map.
+  document.documentElement.style.setProperty('--mk', pct < 75 ? (pct / 75).toFixed(3) : '1');
   try { localStorage.setItem('alttp-map-zoom', String(pct)); } catch(ex) {}
   resizeWindowToMap(initial);
 }

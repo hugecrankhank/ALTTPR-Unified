@@ -227,6 +227,9 @@
         mw.zoomIdx = idx;
       }
       var zl = d.getElementById('zoom-label'); if (zl) zl.textContent = Math.round(pct) + '%';
+      // Hutch (Oct 5): markers keep full size down to 75%, then shrink with
+      // the map. His applyZoom sets --mk; mirror it since we size directly.
+      d.documentElement.style.setProperty('--mk', pct < 75 ? (pct / 75).toFixed(3) : '1');
     } catch (e) {}
   }
   var fitTimer = null;
