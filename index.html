@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ALTTPR Unified</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --line: #2a313c; --text: #e6e9ee;
+    --dim: #8b95a3; --accent: #5fbf6f; --warn: #e3b341; --bad: #e5534b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { display: grid; grid-template-rows: auto 1fr; }
+
+  header { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center;
+    padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; letter-spacing: .02em; }
+  header h1 span { color: var(--accent); }
+  label.ctl { display: flex; gap: 6px; align-items: center; color: var(--dim); font-size: 13px; }
+  select, button, .filebtn { background: #0d1117; color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+  button:hover, .filebtn:hover, select:hover { border-color: #3d4654; }
+  .filebtn.primary { background: #1f6f3a; border-color: #2a8a4a; }
+  #rom-input { display: none; }
+  .spacer { flex: 1; }
+  #link-status { font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 6px; }
+  #link-status i { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); display: inline-block; }
+  #link-status.live i { background: var(--accent); }
+  #link-status.snap i { background: var(--warn); }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-height: 0; }
+  #game-wrap { position: relative; min-height: 0; display: flex; align-items: center; justify-content: center;
+    background: #000; }
+  #game { width: 100%; height: 100%; }
+  #placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 14px;
+    align-items: center; justify-content: center; text-align: center; padding: 24px; color: var(--dim); }
+  #placeholder h2 { color: var(--text); margin: 0; font-size: 20px; }
+  #placeholder p { max-width: 460px; margin: 0; }
+  #placeholder a { color: var(--accent); }
+
+  aside { width: var(--tracker-w, 520px); border-left: 1px solid var(--line); display: flex;
+    flex-direction: column; min-height: 0; background: #000; }
+  aside .tabs { display: flex; border-bottom: 1px solid var(--line); background: var(--panel); }
+  aside .tabs button { border: 0; border-radius: 0; background: transparent; padding: 8px 14px; color: var(--dim); }
+  aside .tabs button.on { color: var(--text); box-shadow: inset 0 -2px var(--accent); }
+  #frames { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  #frames iframe { border: 0; width: 100%; background: #000; }
+  #items-frame { height: 400px; flex: none; }
+  #map-frame { flex: 1; min-height: 0; }
+  #frames.items-only #map-frame { display: none; }
+  #frames.items-only #items-frame { flex: 1; height: auto; }
+  #frames.map-only #items-frame { display: none; }
+
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; grid-template-rows: minmax(260px, 55vh) 1fr; }
+    aside { width: 100%; border-left: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>ALTTPR <span>Unified</span></h1>
+  <label class="filebtn primary" for="rom-input">Load ROM…</label>
+  <input type="file" id="rom-input" accept=".sfc,.smc,.bin">
+  <label class="ctl">World
+    <select id="gamemode">
+      <option value="open">Open</option>
+      <option value="standard">Standard</option>
+      <option value="inverted">Inverted 1.0</option>
+      <option value="inverted2">Inverted 2.0</option>
+      <option value="retro">Retro</option>
+    </select>
+  </label>
+  <label class="ctl">Dungeon items
+    <select id="dungeonitems">
+      <option value="standard">Standard</option>
+      <option value="mapcompass">Map/Compass</option>
+      <option value="mapcompasskeys">Map/Compass/Small Keys</option>
+      <option value="keysanity">Key Sanity</option>
+    </select>
+  </label>
+  <div class="spacer"></div>
+  <div id="link-status"><i></i><span>No game loaded</span></div>
+</header>
+
+<main>
+  <div id="game-wrap">
+    <div id="game"></div>
+    <div id="placeholder">
+      <h2>Load a randomized ROM to start</h2>
+      <p>Generate a seed at <a href="https://alttpr.com/en/randomizer" target="_blank" rel="noopener">alttpr.com</a>
+         using your own Japanese 1.0 ALttP ROM, download the patched <code>.sfc</code>, then load it here.
+         The tracker on the right updates automatically as you play.</p>
+      <p style="font-size:12px">Everything runs in your browser. Your ROM is never uploaded.</p>
+    </div>
+  </div>
+  <aside>
+    <div class="tabs">
+      <button data-view="both" class="on">Items + Map</button>
+      <button data-view="items-only">Items</button>
+      <button data-view="map-only">Map</button>
+    </div>
+    <div id="frames">
+      <iframe id="items-frame" title="Item tracker"></iframe>
+      <iframe id="map-frame" title="Map tracker"></iframe>
+    </div>
+  </aside>
+</main>
+
+<script src="bridge/sni-bridge.js"></script>
+<script>
+(function () {
+  'use strict';
+  var EJS_CDN = 'https://cdn.emulatorjs.org/stable/data/';
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ── settings → tracker URLs ───────────────────────────────────────────────
+  var saved = {};
+  try { saved = JSON.parse(localStorage.getItem('unified-settings') || '{}'); } catch (e) {}
+  $('gamemode').value = saved.gamemode || 'open';
+  $('dungeonitems').value = saved.dungeonitems || 'standard';
+
+  function trackerUrls() {
+    var gm = $('gamemode').value, di = $('dungeonitems').value;
+    var common = '&gamemode=' + gm + '&dungeonitems=' + di + '&bg=black';
+    return {
+      items: 'tracker/itemtracker.html?scale=1' + common,
+      map: 'tracker/map.html?zoom=0.6&logic=nmg&entranceshuffle=no&entrancemode=none' + common,
+    };
+  }
+  function loadTrackers() {
+    var u = trackerUrls();
+    $('items-frame').src = u.items;
+    $('map-frame').src = u.map;
+  }
+  ['gamemode', 'dungeonitems'].forEach(function (id) {
+    $(id).addEventListener('change', function () {
+      localStorage.setItem('unified-settings', JSON.stringify({
+        gamemode: $('gamemode').value, dungeonitems: $('dungeonitems').value }));
+      loadTrackers();
+    });
+  });
+  loadTrackers();
+
+  document.querySelectorAll('aside .tabs button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('aside .tabs button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      $('frames').className = b.dataset.view === 'both' ? '' : b.dataset.view;
+    });
+  });
+
+  // ── link status pill ──────────────────────────────────────────────────────
+  function paint(s) {
+    var el = $('link-status'), txt = el.querySelector('span');
+    el.className = '';
+    if (!s.romLoaded) txt.textContent = 'No game loaded';
+    else if (!s.running) txt.textContent = 'Starting emulator…';
+    else if (s.mode === 'live') { el.className = 'live'; txt.textContent = 'Tracker linked (live memory)'; }
+    else if (s.mode === 'snapshot') { el.className = 'snap'; txt.textContent = 'Tracker linked (snapshot mode)'; }
+    else txt.textContent = 'Waiting for game…';
+  }
+  AlttpBridge.onStatus(paint);
+  setInterval(function () { paint(AlttpBridge.status()); }, 1000);
+
+  // ── ROM loading + EmulatorJS boot ─────────────────────────────────────────
+  $('rom-input').addEventListener('change', async function (ev) {
+    var file = ev.target.files && ev.target.files[0];
+    if (!file) return;
+    var bytes = new Uint8Array(await file.arrayBuffer());
+    if (window.EJS_emulator) {
+      // EmulatorJS doesn't support swapping games in place; reload with the
+      // new file is simplest. Stash it so the reload can pick it up.
+      if (!confirm('Load a different ROM? The current game will be closed.')) return;
+      location.reload();
+      return;
+    }
+    AlttpBridge.setRom(bytes, file.name);
+    bootEmulator(file);
+  });
+
+  function bootEmulator(file) {
+    $('placeholder').remove();
+    window.EJS_player = '#game';
+    window.EJS_core = 'snes9x';          // the bridge reads snes9x's state format
+    window.EJS_pathtodata = EJS_CDN;
+    window.EJS_gameUrl = file;           // EmulatorJS accepts a File object
+    window.EJS_gameName = file.name.replace(/\.[^.]+$/, '');
+    window.EJS_startOnLoaded = true;
+    window.EJS_color = '#1f6f3a';
+    window.EJS_onGameStart = function () {
+      AlttpBridge.invalidate();
+      // Give the core a moment to initialise WRAM before the first locate.
+      setTimeout(function () { AlttpBridge.read(0xF50010, 1); }, 1500);
+    };
+    var s = document.createElement('script');
+    s.src = EJS_CDN + 'loader.js';
+    document.body.appendChild(s);
+  }
+})();
+</script>
+</body>
+</html>
