@@ -308,6 +308,39 @@
     bootEmulator(file);
   });
 
+  // ── volume that works on iPhone/iPad ──────────────────────────────────────
+  // EmulatorJS's slider only sets the gain on audio sources that exist at that
+  // moment; sources the core opens later (e.g. after iOS resumes its suspended
+  // AudioContext on first touch) stay at full volume, so the slider seems dead.
+  // Instead: leave every source at 1 and apply the volume on OpenAL's master
+  // gain node, which all sources feed into, re-checking periodically.
+  // Also tell iOS this is media playback, so the hardware volume buttons
+  // control it and the silent switch doesn't mute it (Safari 16.4+).
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+  function applyVolume() {
+    var ejs = window.EJS_emulator;
+    var ctx = ejs && ejs.Module && ejs.Module.AL && ejs.Module.AL.currentCtx;
+    if (!ctx || !ctx.gain) return;
+    var v = ejs.muted ? 0 : (typeof ejs.volume === 'number' ? ejs.volume : 0.5);
+    if (ctx.gain.gain.value !== v) ctx.gain.gain.value = v;
+    (ctx.sources || []).forEach(function (s) {
+      if (s && s.gain && s.gain.gain.value !== 1) s.gain.gain.value = 1;
+    });
+    if (ctx.audioCtx && ctx.audioCtx.state === 'suspended') { try { ctx.audioCtx.resume(); } catch (e) {} }
+  }
+  function hookVolume() {
+    var ejs = window.EJS_emulator;
+    if (!ejs || ejs.__volHooked || typeof ejs.setVolume !== 'function') return;
+    var orig = ejs.setVolume.bind(ejs);
+    ejs.setVolume = function (v) { orig(v); applyVolume(); };
+    ejs.__volHooked = true;
+    applyVolume();
+  }
+  setInterval(function () { hookVolume(); applyVolume(); }, 500);
+  ['touchend', 'click'].forEach(function (t) {
+    document.addEventListener(t, function () { setTimeout(applyVolume, 50); }, true);
+  });
+
   // ── keep the mouse free ───────────────────────────────────────────────────
   // snes9x advertises SNES-mouse support, so EmulatorJS pointer-locks the
   // cursor whenever the game canvas is clicked, which freezes it in place.
