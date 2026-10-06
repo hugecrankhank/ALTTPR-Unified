@@ -191,6 +191,20 @@
     bootEmulator(file);
   });
 
+  // ── keep the mouse free ───────────────────────────────────────────────────
+  // snes9x advertises SNES-mouse support, so EmulatorJS pointer-locks the
+  // cursor whenever the game canvas is clicked, which freezes it in place.
+  // ALttP never uses a mouse, so block pointer lock on this page entirely.
+  (function () {
+    var noop = function () { return Promise.resolve(); };
+    ['requestPointerLock', 'mozRequestPointerLock', 'webkitRequestPointerLock'].forEach(function (k) {
+      if (Element.prototype[k]) Element.prototype[k] = noop;
+    });
+    document.addEventListener('pointerlockchange', function () {
+      if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
+    });
+  })();
+
   function bootEmulator(file) {
     $('placeholder').remove();
     window.EJS_player = '#game';
@@ -200,7 +214,9 @@
     window.EJS_gameName = file.name.replace(/\.[^.]+$/, '');
     window.EJS_startOnLoaded = true;
     window.EJS_color = '#1f6f3a';
+    window.EJS_defaultOptions = { lockMouse: 'disabled' };
     window.EJS_onGameStart = function () {
+      if (window.EJS_emulator) window.EJS_emulator.enableMouseLock = false;
       AlttpBridge.invalidate();
       // Give the core a moment to initialise WRAM before the first locate.
       setTimeout(function () { AlttpBridge.read(0xF50010, 1); }, 1500);
