@@ -25,8 +25,9 @@
   .filebtn.primary { background: #1f6f3a; border-color: #2a8a4a; }
   #rom-input { display: none; }
   .spacer { flex: 1; }
-  #link-status { font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 6px; }
-  #link-status i { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); display: inline-block; }
+  #link-status, #pad-status { font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 6px; }
+  #link-status i, #pad-status i { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); display: inline-block; }
+  #pad-status.on i { background: var(--accent); }
   #link-status.live i { background: var(--accent); }
   #link-status.snap i { background: var(--warn); }
 
@@ -46,16 +47,26 @@
   aside .tabs button { border: 0; border-radius: 0; background: transparent; padding: 8px 14px; color: var(--dim); }
   aside .tabs button.on { color: var(--text); box-shadow: inset 0 -2px var(--accent); }
   #frames { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-  #frames iframe { border: 0; width: 100%; background: #000; }
-  #items-frame { height: 400px; flex: none; }
-  #map-frame { flex: 1; min-height: 0; }
+  #frames iframe { border: 0; background: #000; display: block; }
+  #items-wrap { height: 400px; flex: none; overflow: hidden; position: relative; }
+  #items-frame { width: 100%; height: 100%; transform-origin: 0 0; }
+  #map-frame { width: 100%; flex: 1; min-height: 0; }
   #frames.items-only #map-frame { display: none; }
-  #frames.items-only #items-frame { flex: 1; height: auto; }
-  #frames.map-only #items-frame { display: none; }
+  #frames.items-only #items-wrap { flex: 1; height: auto; }
+  #frames.map-only #items-wrap { display: none; }
 
+  /* Phones / narrow windows: one scrolling column. Game on top at the SNES
+     aspect ratio, item tracker scaled to the screen width, then both maps
+     stacked full-width so markers stay big enough to tap. */
   @media (max-width: 900px) {
-    main { grid-template-columns: 1fr; grid-template-rows: minmax(260px, 55vh) 1fr; }
+    html, body { height: auto; }
+    body { display: block; }
+    main { display: block; }
+    #game-wrap { width: 100%; aspect-ratio: 8 / 7; max-height: 75vh; }
     aside { width: 100%; border-left: 0; border-top: 1px solid var(--line); }
+    #frames { display: block; }
+    #items-wrap, #frames.items-only #items-wrap { height: 400px; }
+    #map-frame { height: calc(200vw + 90px); }
   }
 </style>
 </head>
@@ -84,6 +95,7 @@
     </select>
   </label>
   <div class="spacer"></div>
+  <div id="pad-status"><i></i><span>No controller</span></div>
   <div id="link-status"><i></i><span>No game loaded</span></div>
 </header>
 
@@ -105,7 +117,7 @@
       <button data-view="map-only">Map</button>
     </div>
     <div id="frames">
-      <iframe id="items-frame" title="Item tracker"></iframe>
+      <div id="items-wrap"><iframe id="items-frame" title="Item tracker"></iframe></div>
       <iframe id="map-frame" title="Map tracker"></iframe>
     </div>
   </aside>
@@ -152,6 +164,111 @@
       $('frames').className = b.dataset.view === 'both' ? '' : b.dataset.view;
     });
   });
+
+  // ── item tracker: scale down to fit narrow panels ─────────────────────────
+  // Hutch's item grid needs ~500px; on a phone it was clipped at the sides.
+  // Render it at 500px and shrink it to the available width instead.
+  var ITEMS_W = 500;
+  function fitItems() {
+    var wrap = $('items-wrap'), fr = $('items-frame');
+    var w = wrap.clientWidth;
+    if (!w) return;
+    var k = Math.min(1, w / ITEMS_W);
+    var full = $('frames').classList.contains('items-only');
+    if (k < 1) {
+      var h = full && window.innerWidth > 900 ? wrap.clientHeight : 400 * k;
+      fr.style.width = ITEMS_W + 'px';
+      fr.style.height = (h / k) + 'px';
+      fr.style.transform = 'scale(' + k + ')';
+      if (window.innerWidth <= 900) wrap.style.height = (400 * k) + 'px';
+    } else {
+      fr.style.width = fr.style.height = fr.style.transform = '';
+      wrap.style.height = '';
+    }
+  }
+  window.addEventListener('resize', fitItems);
+  document.querySelectorAll('aside .tabs button').forEach(function (b) {
+    b.addEventListener('click', function () { setTimeout(fitItems, 0); });
+  });
+  fitItems();
+
+  // ── map auto-fit: always show Light AND Dark World ────────────────────────
+  // Hutch draws each world at a fixed 512px side by side and clips overflow,
+  // so in this panel the Dark World was cut off. Size both maps to fit the
+  // frame, choosing side-by-side or stacked, whichever gives bigger maps.
+  // Map markers are positioned in %, so any size works.
+  function fitMap() {
+    var f = $('map-frame'), d;
+    try { d = f.contentDocument; } catch (e) { return; }
+    if (!d) return;
+    var outer = d.getElementById('maps-outer'), maps = d.getElementById('maps');
+    if (!outer || !maps || !outer.clientWidth) return;
+    var cs = d.defaultView.getComputedStyle(outer);
+    var w = outer.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    var h = outer.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    var gap = 12;
+    var side = Math.min((w - gap) / 2, h);       // side by side
+    var stack = Math.min(w, (h - gap) / 2);      // stacked
+    var vertical = stack > side;
+    var size = Math.max(120, Math.floor(vertical ? stack : side));
+    maps.classList.toggle('vertical', vertical);
+    var lbl = d.getElementById('layout-sel'); if (lbl) lbl.value = vertical ? 'vertical' : 'horizontal';
+    d.querySelectorAll('.map-wrap').forEach(function (el) {
+      el.style.width = size + 'px'; el.style.height = size + 'px';
+    });
+    outer.style.textAlign = 'center';
+  }
+  var fitTimer = null;
+  function fitMapSoon() { clearTimeout(fitTimer); fitTimer = setTimeout(fitMap, 60); }
+  $('map-frame').addEventListener('load', function () {
+    fitMapSoon(); setTimeout(fitMap, 800);   // again after Hutch's own init
+    try {
+      var w = $('map-frame').contentWindow;
+      w.addEventListener('resize', fitMapSoon);
+      // Hutch's bottom bar can wrap and change height; refit when it does.
+      var bb = w.document.getElementById('bottombar');
+      if (bb && w.ResizeObserver) new w.ResizeObserver(fitMapSoon).observe(bb);
+    } catch (e) {}
+  });
+  window.addEventListener('resize', fitMapSoon);
+  document.querySelectorAll('aside .tabs button').forEach(function (b) {
+    b.addEventListener('click', fitMapSoon);
+  });
+
+  // ── controller: indicator + auto-assign to player 1 ───────────────────────
+  // EmulatorJS only assigns a controller to player 1 from its "connected"
+  // event. If the browser already exposes the controller when the emulator
+  // starts, that event fires before EmulatorJS listens and the pad is never
+  // assigned, so it gives no input. Assign it ourselves when that happens.
+  function pads() {
+    try { return Array.from(navigator.getGamepads ? navigator.getGamepads() : []).filter(Boolean); }
+    catch (e) { return []; }
+  }
+  function assignPad() {
+    var ejs = window.EJS_emulator;
+    if (!ejs || !ejs.gamepad || !ejs.frontend || !ejs.frontend.gamepadSelection) return;
+    var sel = ejs.frontend.gamepadSelection;
+    var known = ejs.gamepad.gamepads || [];
+    if (!known.length || sel.some(function (s) { return s; })) return;
+    var gp = known[0];
+    sel[0] = gp.id + '_' + gp.index;
+    try { ejs.frontend.updateGamepadLabels(); } catch (e) {}
+    console.log('[unified] assigned controller to player 1:', gp.id);
+  }
+  function paintPad() {
+    var el = $('pad-status'), list = pads();
+    if (list.length) {
+      el.className = 'on';
+      el.title = list[0].id;
+      el.querySelector('span').textContent = 'Controller connected';
+    } else {
+      el.className = '';
+      el.title = 'Connect a controller, then press any button on it';
+      el.querySelector('span').textContent = 'No controller (press a button)';
+    }
+  }
+  setInterval(function () { paintPad(); assignPad(); }, 500);
+  window.addEventListener('gamepadconnected', function () { paintPad(); assignPad(); });
 
   // ── link status pill ──────────────────────────────────────────────────────
   function paint(s) {
