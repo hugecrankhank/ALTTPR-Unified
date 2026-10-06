@@ -2,8 +2,16 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>ALTTPR Unified</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#161b22">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ALTTPR">
 <style>
   :root {
     --bg: #0e1116; --panel: #161b22; --line: #2a313c; --text: #e6e9ee;
@@ -14,6 +22,8 @@
     font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
   body { display: grid; grid-template-rows: auto 1fr; }
 
+  header { padding-top: max(10px, env(safe-area-inset-top)) !important;
+    padding-left: max(16px, env(safe-area-inset-left)) !important; padding-right: max(16px, env(safe-area-inset-right)) !important; }
   header { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center;
     padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
   header h1 { font-size: 15px; margin: 0 8px 0 0; letter-spacing: .02em; }
@@ -95,6 +105,7 @@
     </select>
   </label>
   <div class="spacer"></div>
+  <button id="install-btn" hidden>Install app</button>
   <div id="pad-status"><i></i><span>No controller</span></div>
   <div id="link-status"><i></i><span>No game loaded</span></div>
 </header>
@@ -283,6 +294,24 @@
   }
   setInterval(function () { paintPad(); assignPad(); }, 500);
   window.addEventListener('gamepadconnected', function () { paintPad(); assignPad(); });
+
+  // ── installable app ───────────────────────────────────────────────────────
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function (e) { console.warn('[unified] SW failed', e); });
+    });
+  }
+  // Chrome / Edge offer an install prompt; surface it as a header button.
+  var deferredPrompt = null;
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault(); deferredPrompt = e; $('install-btn').hidden = false;
+  });
+  $('install-btn').addEventListener('click', function () {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    deferredPrompt.userChoice.finally(function () { deferredPrompt = null; $('install-btn').hidden = true; });
+  });
+  window.addEventListener('appinstalled', function () { $('install-btn').hidden = true; });
 
   // ── link status pill ──────────────────────────────────────────────────────
   function paint(s) {
