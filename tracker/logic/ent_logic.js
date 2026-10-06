@@ -329,6 +329,9 @@
 
   function canReachInvertedLightWorldBunny() {
     if (canReachInvertedLightWorld()) return true;
+    // Flute to the Mire and Titan's Mitts through its portal: in the Light
+    // World as a bunny, no pearl needed — inverted 1.0 and 2.0 (Chris, Sep 2026).
+    if (items.flute >= 1 && items.glove >= 2) return true;
     if (items.agahnim) return true;
     if (hasFoundOpenLightWorldEntrance()) return true;
     return false;

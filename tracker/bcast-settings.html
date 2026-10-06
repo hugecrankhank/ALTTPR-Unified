@@ -469,6 +469,11 @@ html[data-bg="transparent"] .bbg-bar * {
 .settings-row input[type="radio"], .settings-row input[type="checkbox"] {
   margin: 0; cursor: pointer;
 }
+.rand-row label { width: 110px; flex: 0 0 auto; }
+.rand-weight { width: 44px; font-size: 11px; padding: 1px 3px; background: #111; color: #ddd;
+               border: 1px solid #333; border-radius: 3px; }
+.rand-weight:disabled { opacity: .35; }
+.rand-pct { width: 34px; text-align: left; color: #888; font-size: 10px; }
 .settings-radios {
   display: flex; flex-wrap: wrap; gap: 8px;
 }
@@ -602,12 +607,12 @@ html, body { margin: 0; background: #1a1a1a; height: auto; min-height: 100%; wid
           </div>
           <div class="settings-sub disabled" id="anim-random-sub">
             <div class="sub-label">Random Pool</div>
-            <div class="settings-row"><label><input type="checkbox" id="opt-rand-stars"> Falling Stars</label></div>
-            <div class="settings-row"><label><input type="checkbox" id="opt-rand-starburst"> Starburst</label></div>
-            <div class="settings-row"><label><input type="checkbox" id="opt-rand-matrix"> Matrix</label></div>
-            <div class="settings-row"><label><input type="checkbox" id="opt-rand-triforce"> Triforce</label></div>
-            <div class="settings-row"><label><input type="checkbox" id="opt-rand-lightning"> Lightning</label></div>
-            <div class="settings-row"><label><input type="checkbox" id="opt-rand-image"> Image</label></div>
+            <div class="settings-row rand-row"><label><input type="checkbox" id="opt-rand-stars"> Falling Stars</label><input type="number" class="rand-weight" id="opt-randw-stars" min="0" max="10" step="1"><span class="rand-pct" id="opt-randp-stars"></span></div>
+            <div class="settings-row rand-row"><label><input type="checkbox" id="opt-rand-starburst"> Starburst</label><input type="number" class="rand-weight" id="opt-randw-starburst" min="0" max="10" step="1"><span class="rand-pct" id="opt-randp-starburst"></span></div>
+            <div class="settings-row rand-row"><label><input type="checkbox" id="opt-rand-matrix"> Matrix</label><input type="number" class="rand-weight" id="opt-randw-matrix" min="0" max="10" step="1"><span class="rand-pct" id="opt-randp-matrix"></span></div>
+            <div class="settings-row rand-row"><label><input type="checkbox" id="opt-rand-triforce"> Triforce</label><input type="number" class="rand-weight" id="opt-randw-triforce" min="0" max="10" step="1"><span class="rand-pct" id="opt-randp-triforce"></span></div>
+            <div class="settings-row rand-row"><label><input type="checkbox" id="opt-rand-lightning"> Lightning</label><input type="number" class="rand-weight" id="opt-randw-lightning" min="0" max="10" step="1"><span class="rand-pct" id="opt-randp-lightning"></span></div>
+            <div class="settings-row rand-row"><label><input type="checkbox" id="opt-rand-image"> Image</label><input type="number" class="rand-weight" id="opt-randw-image" min="0" max="10" step="1"><span class="rand-pct" id="opt-randp-image"></span></div>
           </div>
           <div class="settings-sub disabled" id="anim-image-sub">
             <div class="settings-row">
@@ -653,6 +658,7 @@ html, body { margin: 0; background: #1a1a1a; height: auto; min-height: 100%; wid
         <div class="settings-row">
           <label><input type="checkbox" id="opt-dungeon-fill"> Dungeon Fill</label>
           <label><input type="checkbox" id="opt-dungeon-box"> Dungeon Box</label>
+          <label id="opt-here-dot-lbl"><input type="checkbox" id="opt-here-dot"> You Are Here Dot</label>
         </div>
         <div class="sub-label">All Chests Collected</div>
         <div class="settings-radios">
@@ -873,6 +879,9 @@ function openSettings() {
   document.getElementById('opt-show-chests').checked    = SETTINGS.showChests;
   document.getElementById('opt-dungeon-fill').checked   = SETTINGS.dungeonFillEnabled;
   document.getElementById('opt-dungeon-box').checked    = SETTINGS.dungeonBoxEnabled;
+  document.getElementById('opt-here-dot').checked       = SETTINGS.hereDot && !RACE_MODE;
+  document.getElementById('opt-here-dot').disabled      = RACE_MODE;
+  document.getElementById('opt-here-dot-lbl').title     = RACE_MODE ? 'Disabled in Race Mode' : '';
   document.querySelectorAll('input[name="view-style"]').forEach(function(r) { r.checked = (r.value === SETTINGS.viewStyle); });
   document.getElementById('opt-item-anim').checked      = SETTINGS.itemAnimEnabled;
   document.getElementById('opt-anim-label').checked     = SETTINGS.animShowLabel;
@@ -885,6 +894,10 @@ function openSettings() {
   [['opt-rand-stars','stars'],['opt-rand-starburst','starburst'],['opt-rand-matrix','matrix'],['opt-rand-triforce','triforce'],['opt-rand-lightning','lightning'],['opt-rand-image','image']].forEach(function(pair){
     var el = document.getElementById(pair[0]); if (el) el.checked = !!_rp2[pair[1]];
   });
+  // First time with weights: start from an even split of whatever is checked.
+  var _rwSaved = null;
+  try { _rwSaved = localStorage.getItem('alttp-broadcast-anim-random-weights'); } catch (e) {}
+  if (_rwSaved === null) resetRandomWeights(); else syncRandomWeights();
   if (ANIM_COLOR_KEYS.indexOf(SETTINGS.animBg) !== -1) applyAnimColorsFor(SETTINGS.animBg);
   refreshAnimColorUI();
   syncAnimSubEnabled();
@@ -992,6 +1005,37 @@ var ANIM_BG_LABELS = {
   stars: 'Falling Stars', starburst: 'Starburst', matrix: 'Matrix',
   triforce: 'Triforce', lightning: 'Lightning'
 };
+
+// ── Random pool weights ─────────────────────────────────────────────────────
+// Each checked background gets a weight box, 0–10. Checking or unchecking one
+// sets every checked box to 1, an even split; the player can then change any of
+// them. The picker uses weight / total, so the grey figure beside each box is
+// the chance it actually gets (Chris, Oct 2026).
+var RAND_KEYS = ['stars', 'starburst', 'matrix', 'triforce', 'lightning', 'image'];
+function resetRandomWeights() {
+  var pool = SETTINGS.animRandomPool || {};
+  var on = RAND_KEYS.filter(function (k) { return pool[k]; });
+  var w = {};
+  RAND_KEYS.forEach(function (k, i) { w[k] = 0; });
+  on.forEach(function (k) { w[k] = 1; });
+  SETTINGS.animRandomWeights = w;
+  syncRandomWeights();
+}
+function syncRandomWeights() {
+  var pool = SETTINGS.animRandomPool || {}, w = SETTINGS.animRandomWeights || {};
+  var total = 0;
+  RAND_KEYS.forEach(function (k) {
+    var n = Number(w[k]); if (!isFinite(n) || n < 0) n = 1;
+    w[k] = Math.min(10, n);
+    if (pool[k]) total += w[k];
+  });
+  RAND_KEYS.forEach(function (k) {
+    var box = document.getElementById('opt-randw-' + k), pct = document.getElementById('opt-randp-' + k);
+    var n = w[k];
+    if (box) { box.value = pool[k] ? n : ''; box.disabled = !pool[k]; }
+    if (pct) pct.textContent = (pool[k] && total > 0) ? Math.round(n / total * 100) + '%' : '';
+  });
+}
 
 function syncAnimSubEnabled() {
   var sub = document.getElementById('item-anim-sub');
@@ -1127,6 +1171,11 @@ function wireSettingsHandlers() {
     applyDungeonBox();
   });
 
+  document.getElementById('opt-here-dot').addEventListener('change', function(e) {
+    SETTINGS.hereDot = e.target.checked;
+    saveSettings();
+  });
+
   // Go Mode Sound: set per profile in the Item Sounds window now.
   // Go Mode Sparklines disabled in this build — no event listeners needed
   var SPARK_PRESETS = {
@@ -1184,7 +1233,28 @@ function wireSettingsHandlers() {
     if (el) el.addEventListener('change', function(e){
       if (!SETTINGS.animRandomPool) SETTINGS.animRandomPool = {};
       SETTINGS.animRandomPool[pair[1]] = e.target.checked;
+      resetRandomWeights();
       saveSettings(); syncAnimSubEnabled();
+    });
+  });
+  // Weight boxes: whole percentages, each checked entry's share of the total.
+  RAND_KEYS.forEach(function (k) {
+    var el = document.getElementById('opt-randw-' + k);
+    if (!el) return;
+    // Arrows only (Chris, Oct 2026): the spinner buttons and the Up/Down keys
+    // change the value; typing, pasting and dropping text are refused.
+    el.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'Tab') return;
+      e.preventDefault();
+    });
+    el.addEventListener('paste', function (e) { e.preventDefault(); });
+    el.addEventListener('drop',  function (e) { e.preventDefault(); });
+    el.addEventListener('input', function () {
+      var n = Math.max(0, Math.min(10, Math.round(Number(el.value) || 0)));
+      if (!SETTINGS.animRandomWeights) SETTINGS.animRandomWeights = {};
+      SETTINGS.animRandomWeights[k] = n;
+      syncRandomWeights();
+      saveSettings();
     });
   });
   // Color preset radios

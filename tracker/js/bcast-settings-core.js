@@ -23,6 +23,7 @@ var SETTINGS = {
   showBigKey:    true,
   showChests:    true,
   dungeonFillEnabled: true, // When false the chests-done/prize-done tints are suppressed
+  hereDot:            false, // you-are-here dot beside the dungeon name; off by default, never in Race Mode
   dungeonBoxEnabled:  true, // When false the default dark slot container is hidden — flat dungeons
   viewStyle:       'modern',     // 'modern' | 'classic'
   itemAnimEnabled: false,        // When true, full-screen spin-in animation on item collect
@@ -37,6 +38,9 @@ var SETTINGS = {
   animBg:           'none',      // 'none' | 'stars' | 'starburst' | 'matrix' | 'triforce' | 'lightning' | 'image' | 'random'
   animBgImage:      '',          // data URL for anim background image (empty = use triforce.jpg)
   animRandomPool:   { stars: true, starburst: true, matrix: true, triforce: true, lightning: true, image: true }, // eligible bgs when animBg==='random'
+  // Relative weight of each pool entry; only the checked ones count, and each
+  // one's chance is its weight over their total. Equal by default.
+  animRandomWeights: { stars: 1, starburst: 1, matrix: 1, triforce: 1, lightning: 1, image: 1 },
   // These three are the *live* colours — whichever animation is running (or is
   // selected in the settings popout) writes its pair here, so every drawing
   // routine can keep reading SETTINGS.animColorA/B without knowing about the
@@ -142,6 +146,7 @@ function loadSettings() {
     SETTINGS.showChests    = localStorage.getItem('alttp-broadcast-show-chests')     !== 'false';
     SETTINGS.dungeonFillEnabled = localStorage.getItem('alttp-broadcast-dungeon-fill') !== 'false';
     SETTINGS.dungeonBoxEnabled  = localStorage.getItem('alttp-broadcast-dungeon-box')  !== 'false';
+    SETTINGS.hereDot            = localStorage.getItem('alttp-broadcast-here-dot') === 'true';
     SETTINGS.viewStyle       = localStorage.getItem('alttp-broadcast-view-style')        || SETTINGS.viewStyle;
     SETTINGS.itemAnimEnabled    = localStorage.getItem('alttp-broadcast-item-anim') === 'true';
     SETTINGS.animShowLabel      = localStorage.getItem('alttp-broadcast-anim-label') !== 'false';
@@ -162,6 +167,10 @@ function loadSettings() {
     try {
       var _rp = JSON.parse(localStorage.getItem('alttp-broadcast-anim-random-pool') || 'null');
       if (_rp && typeof _rp === 'object') SETTINGS.animRandomPool = { stars: !!_rp.stars, starburst: !!_rp.starburst, matrix: !!_rp.matrix, triforce: (_rp.triforce === undefined ? true : !!_rp.triforce), lightning: (_rp.lightning === undefined ? true : !!_rp.lightning), image: !!_rp.image };
+    } catch(e) {}
+    try {
+      var _rw = JSON.parse(localStorage.getItem('alttp-broadcast-anim-random-weights') || 'null');
+      if (_rw && typeof _rw === 'object') SETTINGS.animRandomWeights = _rw;
     } catch(e) {}
     var _legacyPreset = localStorage.getItem('alttp-broadcast-anim-color-preset');
     var _legacyA      = localStorage.getItem('alttp-broadcast-anim-color-a');
@@ -225,6 +234,7 @@ function saveSettings() {
     localStorage.setItem('alttp-broadcast-show-chests',     SETTINGS.showChests    ? 'true' : 'false');
     localStorage.setItem('alttp-broadcast-dungeon-fill',    SETTINGS.dungeonFillEnabled ? 'true' : 'false');
     localStorage.setItem('alttp-broadcast-dungeon-box',     SETTINGS.dungeonBoxEnabled  ? 'true' : 'false');
+    localStorage.setItem('alttp-broadcast-here-dot',        SETTINGS.hereDot            ? 'true' : 'false');
     localStorage.setItem('alttp-broadcast-view-style',      SETTINGS.viewStyle);
     localStorage.setItem('alttp-broadcast-item-anim',        SETTINGS.itemAnimEnabled    ? 'true' : 'false');
     localStorage.setItem('alttp-broadcast-anim-label',      SETTINGS.animShowLabel      ? 'true' : 'false');
@@ -236,6 +246,7 @@ function saveSettings() {
     localStorage.setItem('alttp-broadcast-gomode-sparks',  SETTINGS.gomodeSparksEnabled ? 'true' : 'false');
     localStorage.setItem('alttp-broadcast-anim-bg',            SETTINGS.animBg);
     localStorage.setItem('alttp-broadcast-anim-random-pool',   JSON.stringify(SETTINGS.animRandomPool || {}));
+    localStorage.setItem('alttp-broadcast-anim-random-weights', JSON.stringify(SETTINGS.animRandomWeights || {}));
     localStorage.setItem('alttp-broadcast-anim-color-preset', SETTINGS.animColorPreset);
     localStorage.setItem('alttp-broadcast-anim-color-a',      SETTINGS.animColorA);
     localStorage.setItem('alttp-broadcast-anim-color-b',      SETTINGS.animColorB);

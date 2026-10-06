@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<script src="../bridge/sni-shim.js"></script> <!-- unified-app: routes SNI WebSocket to built-in emulator -->
 <meta charset="UTF-8">
 <title>ALTTP Broadcast View</title>
 <script>
@@ -324,6 +323,11 @@ html[data-bg="transparent"] .bbg-bar * {
   color: #ccc; line-height: 1;
   text-align: center;
   width: 100%;
+}
+.bdng-name.here::after {
+  content: ''; display: inline-block; width: 6px; height: 6px; margin-left: 3px;
+  border-radius: 50%; background: #4dff88; box-shadow: 0 0 4px #4dff88;
+  vertical-align: middle;
 }
 
 /* All icon/value rows are centered horizontally */
@@ -1224,7 +1228,19 @@ function updateMedallions() {
   });
 }
 
+// You-are-here dot beside the dungeon name — the dungeon Link is in right now,
+// from the item tracker's read of $7E040C (Chris, Oct 2026). Kept outside the
+// per-dungeon cache and re-applied each time, so a rebuilt layout keeps it.
+var _currentDungeon = null;
+function applyCurrentDungeon() {
+  Object.keys(dngEls).forEach(function (k) {
+    dngEls[k].name.classList.toggle('here', SETTINGS.hereDot && !RACE_MODE && k === _currentDungeon);
+  });
+}
+
 function applySnap(snap) {
+  if (snap.currentDungeon !== undefined) _currentDungeon = snap.currentDungeon;
+  applyCurrentDungeon();
   // Keep a running merge of everything we've ever been sent, so a settings
   // change can re-render the current state without waiting for the next poll.
   // Done here rather than in the coalescer so every entry point populates it.
@@ -1612,15 +1628,26 @@ function pickRandomAnimBg() {
     var raw = localStorage.getItem('alttp-broadcast-anim-random-pool');
     if (raw) { var j = JSON.parse(raw); if (j && typeof j === 'object') p = j; }
   } catch (e) {}
-  var pool = [];
-  if (p.stars)     pool.push('stars');
-  if (p.starburst) pool.push('starburst');
-  if (p.matrix)    pool.push('matrix');
-  if (p.triforce)  pool.push('triforce');
-  if (p.lightning) pool.push('lightning');
-  if (p.image)     pool.push('image');
+  // Weighted: each checked entry's chance is its weight over the checked
+  // total (Chris, Oct 2026). A missing or bad weight counts as 1, so a pool
+  // saved before weights existed still picks evenly.
+  var w = SETTINGS.animRandomWeights || {};
+  try {
+    var rw = localStorage.getItem('alttp-broadcast-anim-random-weights');
+    if (rw) { var jw = JSON.parse(rw); if (jw && typeof jw === 'object') w = jw; }
+  } catch (e) {}
+  var pool = [], total = 0;
+  ['stars', 'starburst', 'matrix', 'triforce', 'lightning', 'image'].forEach(function (k) {
+    if (!p[k]) return;
+    var n = Number(w[k]);
+    if (!isFinite(n) || n < 0) n = 1;
+    n = Math.min(10, n);
+    if (n > 0) { pool.push([k, n]); total += n; }
+  });
   if (!pool.length) return 'none';
-  return pool[Math.floor(Math.random() * pool.length)];
+  var r = Math.random() * total;
+  for (var i = 0; i < pool.length; i++) { r -= pool[i][1]; if (r < 0) return pool[i][0]; }
+  return pool[pool.length - 1][0];
 }
 
 function _startAnimBg(canvas) {
@@ -2084,6 +2111,7 @@ try {
       if (_snapData && typeof _snapData.raceMode === 'boolean' && _snapData.raceMode !== RACE_MODE) {
         RACE_MODE = _snapData.raceMode;
         updateRaceModeUI();
+        applyCurrentDungeon();
       }
       applySnapCoalesced(_snapData);
     }
@@ -2116,6 +2144,7 @@ function applyAllSettings() {
     applyFillVariable();
     applyDungeonColors();
     applyDungeonBox();
+    applyCurrentDungeon();
     applyDungeonVisibility();
     refreshAllFills();
     if (SETTINGS.viewStyle !== prevViewStyle) rebuildRows();

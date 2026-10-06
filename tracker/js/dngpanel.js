@@ -26,7 +26,7 @@
 
 // Bumped with every change to this file. The map's gear menu shows it, so a
 // stale packaged build can be spotted without guessing (Chris, Sep 2026).
-window.DNGPANEL_BUILD = '1126c';
+window.DNGPANEL_BUILD = '1127k';
 
 var DNG_PANEL_CSS = `
 /* ── Dungeon hover panel ── */
@@ -151,6 +151,7 @@ var DUNGEON_LOCATIONS = {
 var DUNGEON_LOC_LABELS = {
   ct: { 'Boss': 'Agahnim 1' },
   mm: { 'Big Key Chest': 'Big Key Chest (Cutscene)' },
+  sp: { 'Compass Chest': 'Compass Chest (Reach-around)' },
   tr: { 'Big Key Chest': 'Big Key Chest (Lava)' }
 };
 
@@ -180,7 +181,7 @@ var KEYDROP_LOCS = {
   ct:  [{ name: 'Dark Archer Key Drop',  kind: 'drop', flag: [0x181, 0x10], after: 'Dark Maze' },
         { name: 'Circle of Pots Key Drop', kind: 'drop', flag: [0x160, 0x20], after: 'Dark Maze' }],
   sp:  [{ name: 'Pot Row Pot Key',  kind: 'pot', flag: [0x071, 0x10], after: 'Map Chest' },
-        { name: 'Trench 1 Pot Key', kind: 'pot', flag: [0x06f, 0x80], after: 'Compass Chest' },
+        { name: 'Trench 1 Pot Key', kind: 'pot', flag: [0x06f, 0x80], before: 'Compass Chest' },
         { name: 'Hookshot Pot Key', kind: 'pot', flag: [0x06d, 0x08], before: 'West Chest' },
         { name: 'Trench 2 Pot Key', kind: 'pot', flag: [0x06b, 0x80], after: 'Big Key Chest' },
         { name: 'Waterway Pot Key', kind: 'pot', flag: [0x02c, 0x80], after: 'Waterfall Room' }],
@@ -212,6 +213,23 @@ function keyDropOn(kind) {
   if (s.keyDropAll === 'yes') return true;
   return ((kind === 'pot') ? s.keyDrop : s.enemyKeyDrop) === 'yes';
 }
+
+// For the map: it doesn't load items.js, so window.keyDropFlag is missing
+// there and the settings fallback above is the only answer it can get.
+window.dngKeyDropOn = keyDropOn;
+
+// Are this kind's key drops in the item pool? Key Drop says so, and so do the
+// full drop modes: dungeon-wide Pottery Shuffle shuffles every dungeon pot, key
+// pots included, and Enemy Drop "Underworld" every enemy. keyDropOn() alone
+// missed those, so a Pottery + Underworld Key Sanity seed read every key
+// threshold as vanilla — Desert's boss available on one key (Chris, Sep 2026).
+// The key-drop LINES still follow keyDropOn(): in a drop mode those pots and
+// enemies are counted in the card's Pots / Enemies rows instead.
+function keysShuffledBy(kind) {
+  if (keyDropOn(kind)) return true;
+  return (kind === 'pot') ? !!POTTERY_DUNGEON_MODES[potteryModeName()] : enemyDropsOn();
+}
+window.dngKeysShuffled = keysShuffledBy;
 
 // The dungeon's location list with the enabled key drops spliced in.
 function locsFor(locKey) {
@@ -687,14 +705,17 @@ function ham(c) {
   if (c.item('hammer'))   return 'available';
   return c.item('hookshot') ? 'ool' : 'unavail';
 }
-function hook(c, need, poss) {
+function hook(c, need, poss, oolAt) {
   if (!c.item('hookshot')) return 'unavail';
-  return spKeys(c, need, poss, ham(c));
+  return spKeys(c, need, poss, ham(c), oolAt);
 }
 
-function spKeys(c, need, poss, inner) {
+// `oolAt`: from this many keys up to the possible/available counts, a
+// reachable line reads out of logic instead of unavailable (Chris, Oct 2026).
+function spKeys(c, need, poss, inner, oolAt) {
   if (!c.keydrop || c.keys >= need) return inner;
   if (poss && c.keys >= poss) return inner === 'available' ? 'possible' : inner;
+  if (oolAt && c.keys >= oolAt && inner !== 'unavail') return 'ool';
   return 'unavail';
 }
 
@@ -717,6 +738,22 @@ function dpKeyed(c) {
 // `poss` up to that it is merely possible (the keys may be wanted deeper in);
 // below `poss` it can't be reached at all. PoD holds six keys, and its deep
 // locations only become certain once you have them all.
+// Compass side (Compass Chest, Dark Basement): the bow opens a one-key route,
+// so one key and the bow (or enemizer) reads possible (Chris, Sep 2026).
+// Mothula: under entrance shuffle one small key, and the fire rod or the lamp
+// and bombs; otherwise the fire rod alone, as before (Chris, Sep 2026).
+function swEntShuffle() {
+  return !!(window.trackerSettings && window.trackerSettings.entranceShuffle);
+}
+function swFire(c) {
+  if (!swEntShuffle()) return c.item('firerod');
+  if (c.keys < 1) return false;
+  return c.item('firerod') || (c.item('lamp') && c.item('bomb'));
+}
+function podCompass(c) {
+  if (c.keys === 1 && (c.enemizer || c.item('bow'))) return 'possible';
+  return podKeyed(c, 4, 2);
+}
 function podKeyed(c, need, poss) {
   if (c.keys >= need) return 'available';
   if (c.keys >= (poss === undefined ? need - 1 : poss)) return 'possible';
@@ -792,8 +829,13 @@ function ipDeep(c) {
 // granted, so the key tiers stay in one place.
 function ipBigKey(c) {
   if (!c.keydrop && c.keys >= 1 && c.item('hammer')) return 'available';
+  // Key Drop, with the hammer and the hookshot: two keys possible, three
+  // available (Chris, Oct 2026).
+  if (c.keydrop && c.keys >= 2 && c.item('hammer') && c.item('hookshot')) return c.keys >= 3 ? 'available' : 'possible';
   var res = ipDeep(c);
   if (res !== 'unavail') return res;
+  // Key Drop: the cane's way in still takes the first key (Chris, Oct 2026).
+  if (c.keydrop && c.keys < 1) return 'unavail';
   // The Cane of Somaria reaches it on its own — not something to call in
   // logic, but not impossible either. With neither the cane nor the hammer
   // there is no way in and it stays red: an earlier version asked "would a
@@ -819,6 +861,12 @@ function ipBack(c, res) {
   if (res === 'unavail' || res === 'bossitem') return res;
   return (c.item('hookshot') || c.item('somaria')) ? res : 'ool';
 }
+// With every small key and the big key in hand the key doors take you round
+// the gap, so the Big Chest and the boss don't need the hookshot or Somaria
+// (Chris, Sep 2026).
+function ipBackAll(c, res) {
+  return (c.bigkey && c.keys >= (c.keydrop ? 6 : 2)) ? res : ipBack(c, res);
+}
 // Without key drop, one small key and the hammer take the other way round the
 // gap, so these rooms are in logic with neither hookshot nor Somaria (Chris,
 // Sep 2026 — Big Key Chest, Spike Room, Freezor Chest, Iced T Room).
@@ -840,26 +888,34 @@ function trDeep(c) {
   if (c.keys >= 5) return 'available';
   return (c.keys >= 3 && c.bossOk !== false) ? 'possible' : 'unavail';
 }
-// The Eye Bridge is only certain once every one of TR's keys is in hand: with
-// one still out, it may be the one the player spends on the boss door instead
-// (Chris, Sep 2026). So the bridge tracks the boss — possible while a key is
-// missing, available when they are all found.
+// The Eye Bridge sits past the Crystaroller Room's key door; the only key door
+// after it is the pair before the boss. So one key short of TR's total still
+// reaches the bridge for certain — only the boss needs the last one (Chris,
+// Sep 2026). Possible from two keys (three under key drop).
 function trBridge(c) {
   if (!c.bigkey) return 'unavail';
-  var all  = c.keydrop ? 6 : 4;
+  var need = c.keydrop ? 5 : 3;
   var some = c.keydrop ? 3 : 2;
-  if (c.keys >= all) return 'available';
-  return c.keys >= some ? 'possible' : 'unavail';
+  if (c.keys < some) return 'unavail';
+  // Dark rooms on the way in from the front: no lamp is out of logic.
+  if (!c.item('lamp')) return 'ool';
+  return c.keys >= need ? 'available' : 'possible';
 }
 
-// MM under Key Drop: possible from the first key, available at `need`.
-function mmTier(c, need) {
+// MM under Key Drop: possible from `poss` keys (the first, by default),
+// available at `need`.
+function mmTier(c, need, poss) {
   if (c.keys >= need) return 'available';
-  return c.keys >= 1 ? 'possible' : 'unavail';
+  return c.keys >= (poss || 1) ? 'possible' : 'unavail';
 }
 
 // TT's higher key counts only exist under Key Drop shuffle; vanilla TT has one.
 function ttKeys(c, need) { return !c.keydrop || c.keys >= need; }
+// Key Drop: possible at `poss` keys, available at `need`; vanilla, available.
+function ttTier(c, need, poss) {
+  if (ttKeys(c, need)) return 'available';
+  return c.keys >= poss ? 'possible' : 'unavail';
+}
 
 function escapeSewers(c) {
   if (!c.item('boots') && !c.item('bomb')) return 'unavail';
@@ -928,20 +984,24 @@ var LOC_RULES = {
     'Map Chest':        function () { return 'available'; },
     'Big Chest':        function (c) { return c.bigkey ? 'available' : 'unavail'; },
     // Reachable in the dark, but not something to call in logic. Key Drop
-    // shuffle puts a key door in front of it; vanilla EP has none.
+    // shuffle puts a key door in front of it; vanilla EP has none. Under key
+    // drop one key reads possible, two available (Chris, Oct 2026).
     'Big Key Chest':    function (c) {
       if (c.keydrop && c.keys < 1) return 'unavail';
-      return c.item('lamp') ? 'available' : 'ool';
+      if (!c.item('lamp')) return 'ool';
+      return (c.keydrop && c.keys < 2) ? 'possible' : 'available';
     },
     'Boss':             function (c) {
       if (!c.bigkey) return 'unavail';
       // Key Drop shuffle puts two small key doors between the entrance and
       // Armos; vanilla EP has none, so the count only counts under key drop.
-      if (c.keydrop && c.keys < 2) return 'unavail';
+      // One key reads possible, both available (Chris, Sep 2026).
+      if (c.keydrop && c.keys < 1) return 'unavail';
       if (!c.enemizer && !c.item('bow')) return 'unavail';  // Armos needs the bow unless enemizer
       // Torch room on the way: the fire rod lights it as well as the lamp
       // (the reference logic's canTorchRoomNavigate).
-      return (c.item('lamp') || c.item('firerod')) ? 'available' : 'ool';
+      if (!c.item('lamp') && !c.item('firerod')) return 'ool';
+      return (c.keydrop && c.keys < 2) ? 'possible' : 'available';
     },
     // Key drops. The dark square is crossable without light, just not in logic.
     'Dark Square Pot Key':   function (c) { return c.item('lamp') ? 'available' : 'ool'; },
@@ -1048,38 +1108,36 @@ var LOC_RULES = {
       return (c.enemizer || c.item('bow')) ? 'available' : 'unavail';
     },
     'Stalfos Basement':      function (c) { return c.keys >= 1 ? 'available' : 'unavail'; },
-    'Compass Chest':         function (c) { return podKeyed(c, 4, 2); },
+    'Compass Chest':         podCompass,
     // Dark rooms: keys first, then a light source. No light is out of logic —
     // including when the keys only make it possible, since doing it blind isn't
     // in logic either way.
     'Dark Basement - Left':  function (c) {
-      var k = podKeyed(c, 4, 2);
+      var k = podCompass(c);
       if (k === 'unavail') return k;
       return (c.item('lamp') || c.item('firerod')) ? k : 'ool';
     },
     'Dark Basement - Right': function (c) {
-      var k = podKeyed(c, 4, 2);
+      var k = podCompass(c);
       if (k === 'unavail') return k;
       return (c.item('lamp') || c.item('firerod')) ? k : 'ool';
     },
-    'Harmless Hellway':      function (c) { return podKeyed(c, 6, 3); },
-    // Possible from the FIRST key, not the second: the boss sits behind this
-    // chest and reads possible at one key, so a higher threshold here made the
-    // shallower location look harder than the deeper one (Chris, Sep 2026).
-    'Big Key Chest':         function (c) { return podKeyed(c, 6, 1); },
+    'Harmless Hellway':      function (c) { return podKeyed(c, 6, 2); },
+    // Possible from two keys, with Hellway and the Dark Maze (Chris, Sep 2026).
+    'Big Key Chest':         function (c) { return podKeyed(c, 6, 2); },
     'Dark Maze - Top':       function (c) {
-      var k = podKeyed(c, 6, 3);
+      var k = podKeyed(c, 6, 2);
       if (k === 'unavail') return k;
       return c.item('lamp') ? k : 'ool';
     },
     'Dark Maze - Bottom':    function (c) {
-      var k = podKeyed(c, 6, 3);
+      var k = podKeyed(c, 6, 2);
       if (k === 'unavail') return k;
       return c.item('lamp') ? k : 'ool';
     },
     'Big Chest':             function (c) {
       if (!c.bigkey) return 'unavail';
-      var k = podKeyed(c, 6, 3);
+      var k = podKeyed(c, 6, 2);
       if (k === 'unavail') return k;
       return c.item('lamp') ? k : 'ool';
     },
@@ -1104,26 +1162,30 @@ var LOC_RULES = {
     'Map Chest':           function () { return 'available'; },
     // The pot row is before the hammer barrier — one key is all it wants.
     'Pot Row Pot Key':     function (c) { return spKeys(c, 1, 0, 'available'); },
-    'Compass Chest':       function (c) { return spKeys(c, 2, 0, ham(c)); },
+    // Key Drop: two keys out of logic, three available (Chris, Oct 2026) —
+    // likewise one key short reads out of logic for the lines below.
+    'Compass Chest':       function (c) { return spKeys(c, 3, 0, ham(c), 2); },
     // Trench 1's pot is on this side of the hammer barrier, like the pot row —
     // two keys and nothing else (Chris, Sep 2026).
     'Trench 1 Pot Key':    function (c) { return spKeys(c, 2, 0, 'available'); },
-    'Hookshot Pot Key':    function (c) { return hook(c, 3, 0); },
-    'West Chest':          function (c) { return spKeys(c, 4, 0, ham(c)); },
-    'Big Key Chest':       function (c) { return spKeys(c, 4, 0, ham(c)); },
-    'Trench 2 Pot Key':    function (c) { return spKeys(c, 3, 0, ham(c)); },
+    'Hookshot Pot Key':    function (c) { return hook(c, 3, 0, 2); },
+    'West Chest':          function (c) { return spKeys(c, 4, 0, ham(c), 3); },
+    'Big Key Chest':       function (c) { return spKeys(c, 4, 0, ham(c), 3); },
+    'Trench 2 Pot Key':    function (c) { return spKeys(c, 3, 0, ham(c), 2); },
     'Big Chest':           function (c) {
       if (!c.bigkey) return 'unavail';
-      return spKeys(c, 3, 0, ham(c));
+      // Same room as the Hookshot Pot Key: two keys out of logic, three
+      // available (Chris, Oct 2026).
+      return spKeys(c, 3, 0, ham(c), 2);
     },
-    'Flooded Room - Left':  function (c) { return hook(c, 5, 4); },
-    'Flooded Room - Right': function (c) { return hook(c, 5, 4); },
-    'Waterfall Room':       function (c) { return hook(c, 5, 4); },
-    'Waterway Pot Key':     function (c) { return hook(c, 5, 4); },
+    'Flooded Room - Left':  function (c) { return hook(c, 5, 4, 3); },
+    'Flooded Room - Right': function (c) { return hook(c, 5, 4, 3); },
+    'Waterfall Room':       function (c) { return hook(c, 5, 4, 3); },
+    'Waterway Pot Key':     function (c) { return hook(c, 5, 4, 3); },
     'Boss':                function (c) {
       if (!c.item('hookshot')) return 'unavail';
       if (c.bossOk === false) return 'bossitem';
-      return spKeys(c, 6, 5, ham(c));
+      return spKeys(c, 6, 5, ham(c), 4);
     }
   },
   sw: {
@@ -1135,22 +1197,30 @@ var LOC_RULES = {
     'Pinball Room':  function () { return 'available'; },
     'Big Key Chest': function () { return 'available'; },
     'Big Chest':     function (c) { return c.bigkey ? 'available' : 'unavail'; },
-    'Bridge Room':   function (c) { return c.item('firerod') ? 'available' : 'unavail'; },
+    // Entrance shuffle: the SW label is all it takes (the wrapper below checks
+    // it) — the key and fire are the boss's, not the bridge's (Chris, Sep 2026).
+    'Bridge Room':   function (c) {
+      if (swEntShuffle()) return 'available';
+      return c.item('firerod') ? 'available' : 'unavail';
+    },
+    // Key drop only. One key reads possible, three available (Chris, Oct 2026).
     'Spike Corner Key Drop': function (c) {
-      return (c.keys >= 1 && c.item('firerod') && c.item('sword')) ? 'available' : 'unavail';
+      if (!c.item('firerod') || !c.item('sword')) return 'unavail';
+      return podKeyed(c, 3, 1);
     },
     'Boss':          function (c) {
-      if (!c.item('firerod')) return 'unavail';
+      if (!swFire(c)) return 'unavail';
       // The curtain in front of Mothula is cut with a sword, in every mode but
       // swordless (Chris, Sep 2026).
       if (!c.swordless && !c.item('sword')) return 'unavail';
       // The keys between the entrance and Mothula come off a pot and an enemy,
       // so outside Key Drop shuffle they are always there and no count gates
-      // the boss (Chris, Sep 2026). Key drop shuffles them into the pool, and
-      // then two of them are the price.
-      if (c.keydrop && c.keys < 2) return 'unavail';
+      // the boss (Chris, Sep 2026). Key drop shuffles them into the pool: two
+      // keys read possible, four available (Chris, Oct 2026).
+      var st = c.keydrop ? podKeyed(c, 4, 2) : 'available';
+      if (st === 'unavail') return st;
       if (c.bossOk === false) return 'bossitem';
-      return 'available';
+      return st;
     }
   },
 
@@ -1165,23 +1235,31 @@ var LOC_RULES = {
     'Spike Switch Pot Key': function (c) {
       return (c.bigkey && c.keys >= 1) ? 'available' : 'unavail';
     },
-    'Attic':         function (c) { return (c.bigkey && ttKeys(c, 2)) ? 'available' : 'unavail'; },
+    // Key Drop: two keys possible, three available (Chris, Oct 2026) — the
+    // boss likewise.
+    'Attic':         function (c) { return c.bigkey ? ttTier(c, 3, 2) : 'unavail'; },
+    // One key opens the cell under Key Drop too (Chris, Oct 2026).
     "Blind's Cell":  function (c) {
-      if (!c.bigkey) return 'unavail';
-      if (ttKeys(c, 2)) return 'available';
-      return c.keys >= 1 ? 'possible' : 'unavail';
+      return (c.bigkey && ttKeys(c, 1)) ? 'available' : 'unavail';
     },
     'Big Chest':     function (c) {
       // The hammer smashes the floor above it — no way in without one, in any
       // mode.
-      if (!c.bigkey || !c.item('hammer') || c.keys < 1) return 'unavail';
-      if (ttKeys(c, 3)) return 'available';
-      return c.keys >= 2 ? 'possible' : 'unavail';
+      // One small key, the big key and the hammer — key drop or not (Chris,
+      // Oct 2026; it wanted three keys under key drop). With keys unshuffled
+      // the count is normally taken as met, but TT's one key sits in a chest
+      // you have to open first, so here it must actually be picked up.
+      var k = c.keysFree ? c.held : c.keys;
+      return (c.bigkey && c.item('hammer') && k >= 1) ? 'available' : 'unavail';
     },
     'Boss':          function (c) {
-      if (!c.bigkey || !ttKeys(c, 2)) return 'unavail';
+      if (!c.bigkey) return 'unavail';
+      // Boss Shuffle: Blind's attic-and-maiden setup doesn't apply, so the big
+      // key alone opens the way (Chris, Oct 2026).
+      var st = bossShuffleOn() ? 'available' : ttTier(c, 3, 2);
+      if (st === 'unavail') return st;
       if (c.bossOk === false) return 'bossitem';
-      return 'available';
+      return st;
     }
   },
 
@@ -1191,29 +1269,37 @@ var LOC_RULES = {
     // keeps its old (vanilla) answer and adds a key-drop branch. ipDeep() is
     // the shared "past the big key chest" tier.
     'Jelly Key Drop':   function () { return 'available'; },
-    'Compass Chest':    function (c) {
-      if (!c.keydrop) return 'available';
-      return c.keys >= 1 ? 'available' : 'unavail';
-    },
+    // The first chest in: no key door in front of it, key drop or not
+    // (Chris, Sep 2026).
+    'Compass Chest':    function () { return 'available'; },
     'Big Key Chest':    ipBigKey,
     'Conveyor Key Drop': function (c) { return c.keys >= 1 ? 'available' : 'unavail'; },
     'Spike Room':       function (c) {
       if (!c.keydrop) return ipBackKey(c, 'available');
       if (c.keys >= 3 && c.item('hookshot')) return 'available';
-      return ipBack(c, (c.keys >= 3 && c.item('hammer')) ? 'possible' : 'unavail');
+      // One key is enough to call it possible (Chris, Sep 2026).
+      return ipBack(c, c.keys >= 1 ? 'possible' : 'unavail');
     },
     'Hammer Block Key Drop': ipDeep,
     'Map Chest':        function (c) {
       // Same one-key route as the Big Key Chest (Chris, Sep 2026).
       if (!c.keydrop && c.keys >= 1 && c.item('hammer')) return ipInvGlove(c, 'available');
-      return ipInvGlove(c, ipDeep(c));
+      var res = ipDeep(c);
+      // The Cane of Somaria reaches it without the hammer — out of logic, the
+      // same as the Big Key Chest (Chris, Sep 2026).
+      if (res === 'unavail' && c.item('somaria')) res = 'ool';
+      return ipInvGlove(c, res);
     },
     'Freezor Chest':    function (c) { return ipBackKey(c, ipKeys(c, 2)); },
     'Iced T Room':      function (c) { return ipBackKey(c, ipKeys(c, 2)); },
     'Many Pots Pot Key': function (c) { return c.keys >= 2 ? 'available' : 'unavail'; },
     'Big Chest':        function (c) {
       if (!c.bigkey) return 'unavail';
-      return ipBack(c, ipKeys(c, 2));
+      var res = ipBackAll(c, ipKeys(c, 2));
+      // One key short of all of them, with no hookshot or Somaria: possible
+      // rather than out of logic (Chris, Sep 2026).
+      if (res === 'ool' && c.keys >= (c.keydrop ? 5 : 1)) return 'possible';
+      return res;
     },
     'Boss':             function (c) {
       // Kholdstare is reachable without the big key, so a missing big key
@@ -1223,7 +1309,8 @@ var LOC_RULES = {
       // picked up yet doesn't rule Kholdstare out — it just isn't certain.
       // Certain means BOTH keys found; one is still only possible (Chris,
       // Sep 2026, correcting the earlier "available from the first key").
-      if (!c.keydrop) res = c.keys >= 2 ? 'available' : 'possible';
+      // One key is enough with the Cane of Somaria (Chris, Sep 2026).
+      if (!c.keydrop) res = (c.keys >= 2 || (c.keys >= 1 && c.item('somaria'))) ? 'available' : 'possible';
       else if (!c.item('hammer')) res = 'unavail';
       // Key Drop. These counts are in "both halves on" terms — Ice Palace has
       // six then, and a seed running only one half credits the other, so a
@@ -1233,10 +1320,12 @@ var LOC_RULES = {
       // the possible readings (five and four effective).
       else if (c.keys >= 6) res = 'available';
       else if (c.keys >= 4) res = 'possible';
+      // Three keys, the hammer and the red cane (Chris, Oct 2026).
+      else if (c.keys >= 3 && c.item('somaria')) res = 'possible';
       else res = 'unavail';
       if (!c.bigkey) res = (res === 'unavail') ? 'unavail' : 'possible';
       else if (c.bossOk === false) return 'bossitem';
-      return ipInvGlove(c, ipBack(c, res));
+      return ipInvGlove(c, ipBackAll(c, res));
     }
   },
 
@@ -1248,18 +1337,22 @@ var LOC_RULES = {
     'Bridge Chest':  function () { return 'available'; },
     'Spikes Pot Key': function () { return 'available'; },
     'Spike Chest':   function () { return 'available'; },
-    'Fishbone Pot Key': function (c) { return mmTier(c, 5); },
+    // Key Drop counts (Chris, Oct 2026). Nothing needs a sixth key: the last
+    // key door, at the back, leads nowhere that matters.
+    'Fishbone Pot Key': function (c) { return mmTier(c, 4); },
     'Compass Chest': function (c) {
-      return c.keydrop ? mmTier(c, 6)
-                       : ((c.item('lamp') || c.item('firerod')) ? 'available' : 'unavail');
+      // The lamp or the fire rod in every mode; under Key Drop possible from
+      // two keys (Chris, Oct 2026).
+      if (!c.item('lamp') && !c.item('firerod')) return 'unavail';
+      return c.keydrop ? mmTier(c, 5, 2) : 'available';
     },
-    'Main Lobby':    function (c) { return c.keydrop ? mmTier(c, 5) : 'available'; },
-    'Conveyor Crystal Key Drop': function (c) { return mmTier(c, 5); },
+    'Main Lobby':    function (c) { return c.keydrop ? mmTier(c, 1) : 'available'; },
+    'Conveyor Crystal Key Drop': function (c) { return mmTier(c, 3); },
     'Map Chest':     function (c) { return c.keydrop ? mmTier(c, 5) : 'available'; },
     // The cutscene chest is behind the torch room either way.
     'Big Key Chest': function (c) {
       if (!c.item('lamp') && !c.item('firerod')) return 'unavail';
-      return c.keydrop ? mmTier(c, 6) : 'available';
+      return c.keydrop ? mmTier(c, 5, 2) : 'available';   // possible from two keys
     },
     'Big Chest':     function (c) { return c.bigkey ? 'available' : 'unavail'; },
     'Boss':          function (c) {
@@ -1305,7 +1398,7 @@ var LOC_RULES = {
       if (c.keydrop) return trDeep(c);
       return (c.bigkey && c.keys >= 2) ? 'available' : 'unavail';
     },
-    // Two keys reaches the bridge, three makes it certain (six/five under key drop).
+    // Two keys reaches the bridge, three makes it certain (three/five under key drop).
     'Eye Bridge - Top Left':       trBridge,
     'Eye Bridge - Top Right':      trBridge,
     'Eye Bridge - Bottom Left':    trBridge,
@@ -1418,6 +1511,61 @@ Object.keys(LOC_RULES.tr).forEach(function (n) {
   };
 });
 
+// Skull Woods is several entrances, and under entrance shuffle each section of
+// the card opens only once the entrance label that leads there has been placed
+// on the map (Chris, Sep 2026). The Big Chest also wants the big key (its own
+// rule). Only the map knows the labels; with none to read (the item tracker),
+// nothing is gated here.
+var SW_LABELS = {
+  'Map Chest': ['SW M'], 'West Lobby Pot Key': ['SW M'], 'Pot Prison': ['SW M'],
+  'Compass Chest': ['SW M'], 'Pinball Room': ['SW M'], 'Big Chest': ['SW M'],
+  'Big Key Chest': ['SW E', 'SW W'],
+  'Bridge Room': ['SW'], 'Spike Corner Key Drop': ['SW'], 'Boss': ['SW']
+};
+function swLabelPlaced(codes) {
+  var labels = window._entLabels;
+  if (!labels) return true;
+  for (var k in labels) if (codes.indexOf(labels[k]) !== -1) return true;
+  return false;
+}
+Object.keys(LOC_RULES.sw).forEach(function (n) {
+  var inner = LOC_RULES.sw[n];
+  LOC_RULES.sw[n] = function (c) {
+    if (swEntShuffle() && SW_LABELS[n] && !swLabelPlaced(SW_LABELS[n])) return 'unavail';
+    return inner(c);
+  };
+});
+
+// The Boss line in every dungeon whose boss can be shuffled, applied on top of
+// the dungeon's own Boss rule (Chris, Oct 2026):
+//   - boss known, its item missing → "need boss item", the same test that puts
+//     the red stripe on the map (some rules, EP's among them, never asked);
+//   - boss unknown under Boss Shuffle → possible rather than available, the
+//     card's version of the yellow stripe — unless the fire rod, ice rod,
+//     hookshot and hammer are all held, which beat any boss (the stripe's rule).
+function bossShuffleOn() {
+  var s = window.trackerSettings || {};
+  var v = s.bossShuffle;
+  if (v === undefined) {
+    try { v = new URLSearchParams(window.location.search).get('bossshuffle') || localStorage.getItem('alttp-bossshuffle'); } catch (e) {}
+  }
+  return v !== 'no';
+}
+function allBossItems(c) {
+  return c.item('firerod') && c.item('icerod') && c.item('hookshot') && c.item('hammer');
+}
+Object.keys(LOC_RULES).forEach(function (dk) {
+  if (dk === 'ct' || !LOC_RULES[dk].Boss) return;
+  var inner = LOC_RULES[dk].Boss;
+  LOC_RULES[dk].Boss = function (c) {
+    var res = inner(c);
+    if (res === 'unavail' || res === 'bossitem') return res;
+    if (c.bossOk === false) return 'bossitem';
+    if (c.bossOk == null && res === 'available' && bossShuffleOn() && !allBossItems(c)) return 'possible';
+    return res;
+  };
+});
+
 Object.keys(LOC_RULES.sp).forEach(function (n) {
   if (n === 'Entrance') return;
   var inner = LOC_RULES.sp[n];
@@ -1478,7 +1626,7 @@ function ruleContext(dk, baseCls) {
   // with no key drop at all the rules take their own non-keydrop branch.)
   var onDrops = 0, offDrops = 0;
   (KEYDROP_LOCS[dk] || []).forEach(function (d) {
-    if (keyDropOn(d.kind)) onDrops++; else offDrops++;
+    if (keysShuffledBy(d.kind)) onDrops++; else offDrops++;
   });
   // No drop of this dungeon's own is shuffled → it behaves exactly as vanilla,
   // whatever the global setting says (DP is all pot keys, so Enemy Key Drop
@@ -1500,6 +1648,8 @@ function ruleContext(dk, baseCls) {
     bigkey:   dngItemState(dk, 'bigkey') === 1,
     keys:     have,
     found:    have,
+    held:     held || 0,      // the keys actually picked up, with no free credit
+    keysFree: keysFree,
     maxKeys:  maxKeys,
     keydrop:  onDrops > 0,
     swordless: !!(window.trackerSettings && window.trackerSettings.swordless === 'yes'),

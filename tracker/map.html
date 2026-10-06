@@ -1,7 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<script src="../bridge/sni-shim.js"></script> <!-- unified-app: routes SNI WebSocket to built-in emulator -->
 <meta charset="UTF-8">
 <title>ALTTP Map</title>
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src * ws://*:*; img-src 'self' data:; style-src 'self' 'unsafe-inline';">
@@ -31,6 +30,24 @@ body {
   border-radius: 3px; padding: 2px 5px; font-size: 11px; cursor: pointer;
 }
 .tb-sep { color: #333; margin: 0 2px; }
+/* A narrow window (stacked layout, entrance shuffle's extra buttons) wraps the
+   bar onto a second row instead of squashing labels and pushing Settings off
+   the edge. The window re-fits to the taller bar (Chris, Sep 2026). */
+#topbar { flex-wrap: wrap; row-gap: 4px; }
+#topbar > * { white-space: nowrap; }
+.tb-sep.row-edge { visibility: hidden; }
+/* Entrance shuffle: two fixed rows — layout, zoom and Settings (top right) on
+   the first; Connectors, Notes & Connectors and Checks on the second (Chris,
+   Sep 2026). Flex order moves them; .tb-break forces the line. */
+#topbar .tb-break { display: none; }
+/* center: only the second row has free space — Settings' auto margin takes the first row's. */
+#topbar.ent-rows { row-gap: 2px; justify-content: center; }
+#topbar.ent-rows #settings-wrap { order: 1; }
+#topbar.ent-rows .tb-break { display: block; order: 2; flex-basis: 100%; height: 0; }
+#topbar.ent-rows #ent-sep-1 { display: none !important; }
+#topbar.ent-rows #ent-conn-toggle-wrap, #topbar.ent-rows #ent-sep-2,
+#topbar.ent-rows #ent-info-btn, #topbar.ent-rows #ent-sep-3,
+#topbar.ent-rows #checklist-btn { order: 3; }
 .zoom-btn {
   background: #1a1a1a; color: #ccc; border: 1px solid #333;
   border-radius: 3px; padding: 0 7px; font-size: 15px; line-height: 1.6;
@@ -89,7 +106,9 @@ body {
      MAP_PAD below follows. */
   padding: 10px;
 }
-#maps { display: inline-flex; flex-direction: row; gap: 12px; position: relative; }
+/* vertical-align: top — as an inline box #maps sat on the text baseline, and
+   the 4px descender gap below it overflowed #maps-outer into a scrollbar. */
+#maps { display: inline-flex; flex-direction: row; gap: 12px; position: relative; vertical-align: top; }
 #maps.vertical { flex-direction: column; }
 
 .map-wrap {
@@ -202,6 +221,7 @@ body {
 .ent-marker.connect-pending { box-shadow: 0 0 0 3px #fff; }
 .ent-marker.cleared { background: rgba(70,70,70,0.85); border-color: #666; opacity: 0.75; z-index: 0; }
 .ent-marker.ent-unavailable:not(.cleared) { background: #d32f2f !important; border-color: #7a0000; }
+.ent-marker.ent-ool:not(.cleared) { background: #9333ea !important; border-color: #4c1d95; }
 .ent-marker.ent-dungeon-cleared:not(.cleared) { background: rgba(70,70,70,0.85); border-color: #666; opacity: 0.75; z-index: 0; }
 .ent-marker.ent-boss-cleared:not(.cleared):not(.ent-dungeon-cleared) { background: #9bd0f5; border-color: #4a90c4; opacity: 0.85; }
 
@@ -626,9 +646,10 @@ body {
   </label>
   <span class="tb-sep" id="ent-sep-2">|</span>
   <button class="zoom-btn" id="ent-info-btn" style="font-size:11px;padding:0 8px;">Notes &amp; Connectors</button>
-  <span class="tb-sep">|</span>
+  <span class="tb-sep" id="ent-sep-3">|</span>
   <button class="zoom-btn" id="checklist-btn" style="font-size:11px;padding:0 8px;" onclick="openCheckList()">☑ Checks</button>
 
+  <span class="tb-break"></span>
   <div id="settings-wrap">
     <button id="settings-btn" type="button" title="Map settings">&#9881; Settings</button>
     <div id="settings-panel">
@@ -834,6 +855,15 @@ body {
 </div>
 
 <script>
+// macOS: Ctrl+click is the right-click. Chromium sends it as a contextmenu
+// AND an ordinary click, so every control with both a left- and right-click
+// action did both — right-clicking a prize to mark it collected also cycled it
+// one step on (crystal → red crystal, pendant → green pendant; Chris, Oct
+// 2026). The contextmenu handler is the one that means it, so the click is
+// swallowed before any element sees it.
+window.addEventListener('click', function (e) {
+  if (e.ctrlKey) { e.stopPropagation(); e.preventDefault(); }
+}, true);
 // ── Early settings init — must run before any logic scripts ──────────────────
 (function() {
   var p = new URLSearchParams(window.location.search);
@@ -1067,6 +1097,14 @@ window.DUNGEON_POSITIONS = {
 
 // ── Dungeon logic ─────────────────────────────────────────────────────────────
 // Returns 'green','yellow','orange','red'
+// Every small key and the big key held: the key doors take you round the gap
+// in the descent, so neither the hookshot nor Somaria is needed (Chris, Sep
+// 2026 — matches ipBackAll in dngpanel.js).
+function ipAllKeys(it) {
+  var keysOk = !shuffleSmallKeys() || (it.ipSmallKeys || 0) >= (it.ipMaxSmallKeys || 2);
+  return keysOk && !!it.ipBigKey;
+}
+
 // CT's small key total: two normally, four once Key Drop shuffle adds its own.
 function ctKeyGoal() {
   var t = window.trackerSettings || {};
@@ -1121,6 +1159,35 @@ window.dwEastByBomb = function () {
   return !!(it.moonpearl && it.gloves >= 2 && it.bomb);
 };
 
+// Desert Palace with its pot keys shuffled (Key Drop, or a dungeon-wide
+// Pottery Shuffle): four key doors stand before Lanmolas, so the
+// marker stays yellow until all four keys are held — the card's Boss line reads
+// possible at three and available at four (Chris, Sep 2026).
+function dpKeyDropShort() {
+  if (!(window.dngKeysShuffled && window.dngKeysShuffled('pot'))) return false;
+  return ((window.trackerItems || {}).dpSmallKeys || 0) < 4;
+}
+
+// Skull Woods with its key drops shuffled: the card's Boss reads possible on
+// two keys and available on four, so the marker waits for all four (Chris,
+// Oct 2026).
+function swKeyDropShort() {
+  if (!(window.dngKeysShuffled && (window.dngKeysShuffled('pot') || window.dngKeysShuffled('drop')))) return false;
+  return ((window.trackerItems || {}).swSmallKeys || 0) < 4;
+}
+
+// Ice Palace and Thieves' Town with their key drops shuffled: the deep lines
+// and the boss want every key, so the marker waits for the dungeon's full key
+// count (Chris, Oct 2026). The count is the tracker's own maximum for the
+// seed's mode.
+// `spare`: keys the dungeon has but no check needs — Misery Mire's last key
+// door, at the back, leads nowhere that matters (Chris, Oct 2026).
+function keyDropShort(k, spare) {
+  if (!(window.dngKeysShuffled && (window.dngKeysShuffled('pot') || window.dngKeysShuffled('drop')))) return false;
+  var it = window.trackerItems || {};
+  return (it[k + 'SmallKeys'] || 0) < (it[k + 'MaxSmallKeys'] || 0) - (spare || 0);
+}
+
 function dungeonColor(key) {
   var it = window.trackerItems;
   var hasMedallion = function(dungeonKey) {
@@ -1149,6 +1216,11 @@ function dungeonColor(key) {
     (it.agahnim || it.gloves >= 2 || (it.gloves >= 1 && it.hammer))
   );
   var lwAccess = lwVillage; // default general LW access
+  // Entrance shuffle: a dungeon is reached through whichever entrance its label
+  // sits on, so the vanilla Light World route doesn't gate it. Inverted EP, HC
+  // and Ganon's Tower still asked it and went red with the entrance in hand
+  // (Chris, Sep 2026 — EP on Ice Rod Cave). DP, ToH and the rest already skip it.
+  if (settings.entranceShuffle) lwAccess = true;
 
   switch (key) {
     case 'ep': {
@@ -1159,13 +1231,23 @@ function dungeonColor(key) {
       if (shuffleBigKey()) {
         if (!it.epBigKey) return 'yellow';
       }
+      // With its key drops shuffled, EP has two key doors before Armos: the
+      // card's Boss is possible on one key and available on two, so the marker
+      // waits for both (Chris, Sep 2026).
+      if (window.dngKeysShuffled && (window.dngKeysShuffled('pot') || window.dngKeysShuffled('drop')) &&
+          (it.epSmallKeys || 0) < 2) return 'yellow';
       // The lamp is only ever for EP's dark rooms — the Big Key Chest and,
       // under pot key drop, the Dark Square pot. Once those are collected or
       // skipped it stops mattering and the dungeon is simply green (Chris,
-      // Sep 2026). The boss takes the fire rod instead, so it is not in here.
+      // Sep 2026). The boss takes the lamp or the fire rod — see below.
       if (it.lamp) return 'green';
+      // No lamp: the boss's torch room still wants the fire rod, or Armos is
+      // out of logic — the card said so while the marker stayed green
+      // (Chris, Oct 2026). Once Armos is down that no longer matters.
+      if (!it.firerod && !(DUNGEONS.ep && DUNGEONS.ep.cleared)) return 'yellow';
       var epDone = window.dngLocDone || function () { return false; };
-      var epPotOn = !!(window.keyDropFlag && window.keyDropFlag());
+      // keyDropFlag lives in items.js, which the map doesn't load.
+      var epPotOn = !!(window.dngKeyDropOn && window.dngKeyDropOn('pot'));
       var epDarkLeft = !epDone('ep', 'Big Key Chest')
                     || (epPotOn && !epDone('ep', 'Dark Square Pot Key'));
       return epDarkLeft ? 'yellow' : 'green';
@@ -1178,6 +1260,7 @@ function dungeonColor(key) {
       // big key and a light source (lamp or firerod).
       if (settings.entranceShuffle) {
         if (!it.dpBigKey || (!it.lamp && !it.firerod)) return 'yellow';
+        if (dpKeyDropShort()) return 'yellow';
         return 'green';
       }
       // Inverted: DP is in LW — requires LW access + book only (mirror route not available in inverted)
@@ -1195,6 +1278,7 @@ function dungeonColor(key) {
         var dpKeys = (it.dpSmallKeys) || 0;
         if (dpKeys < 1) return 'yellow';
       }
+      if (dpKeyDropShort()) return 'yellow';
       if (shuffleBigKey()) {
         if (!it.dpBigKey) return 'yellow';
       }
@@ -1412,11 +1496,14 @@ function dungeonColor(key) {
       if (isEntShuffleSW) {
         var swSwordOk = swordless ? !!it.hammer : !!it.sword;
         if (!swSwordOk) return 'yellow';
-        if ((it.swSmallKeys || 0) < 1) return 'yellow';
+        // One small key is part of it (Chris, Sep 2026).
+        if (shuffleSmallKeys() && (it.swSmallKeys || 0) < 1) return 'yellow';
         if (shuffleBigKey()) {
           if (!it.swBigKey) return 'yellow';
         }
-        return it.firerod ? 'green' : 'yellow';
+        if (swKeyDropShort()) return 'yellow';
+        // Fire rod, or the lamp and bombs (Chris, Sep 2026).
+        return (it.firerod || (it.lamp && it.bomb)) ? 'green' : 'yellow';
       }
       // Inverted: DW is home world — SW accessible from start
       if (!inverted) {
@@ -1431,6 +1518,7 @@ function dungeonColor(key) {
       if (shuffleBigKey()) {
         if (!it.swBigKey) return 'yellow';
       }
+      if (swKeyDropShort()) return 'yellow';
       return it.firerod ? 'green' : 'yellow';
     }
 
@@ -1447,6 +1535,7 @@ function dungeonColor(key) {
         if (shuffleBigKey()) {
           if (!it.ttBigKey) return 'yellow';
         }
+        if (keyDropShort('tt')) return 'yellow';
         return it.hammer ? 'green' : 'yellow';
       }
       // Inverted: DW is home world — TT accessible from start, just needs hammer
@@ -1464,6 +1553,7 @@ function dungeonColor(key) {
       if (shuffleBigKey()) {
         if (!it.ttBigKey) return 'yellow';
       }
+      if (keyDropShort('tt')) return 'yellow';
       return it.hammer ? 'green' : 'yellow';
     }
 
@@ -1487,7 +1577,8 @@ function dungeonColor(key) {
         // Gloves (level 1) for the push-block room, and a way over the gap in
         // the descent — hookshot, or Somaria's block. Bomb jumping around it
         // works but isn't in logic.
-        return (it.hammer && it.gloves >= 1 && (it.hookshot || it.somaria)) ? 'green' : 'yellow';
+        if (keyDropShort('ip')) return 'yellow';
+        return (it.hammer && it.gloves >= 1 && (it.hookshot || it.somaria || ipAllKeys(it))) ? 'green' : 'yellow';
       }
       // Inverted: DW is home world — no moonpearl or titans mitt needed
       if (!inverted && !it.moonpearl) return 'red';
@@ -1521,7 +1612,8 @@ function dungeonColor(key) {
       // inside IP), and a way over the gap in the descent — hookshot or
       // Somaria. Without these it's still completable for surface checks,
       // hence yellow.
-      return (it.hammer && it.gloves >= 1 && (it.hookshot || it.somaria)) ? 'green' : 'yellow';
+      if (keyDropShort('ip')) return 'yellow';
+      return (it.hammer && it.gloves >= 1 && (it.hookshot || it.somaria || ipAllKeys(it))) ? 'green' : 'yellow';
     }
 
     case 'mm':
@@ -1545,6 +1637,7 @@ function dungeonColor(key) {
           if (shuffleBigKey()) {
             if (!it.mmBigKey) return 'yellow';
           }
+          if (keyDropShort('mm', 1)) return 'yellow';
           return (it.somaria && it.lamp) ? 'green' : 'yellow';
         }
       }
@@ -1573,6 +1666,7 @@ function dungeonColor(key) {
       if (shuffleBigKey()) {
         if (!it.mmBigKey) return 'yellow';
       }
+      if (keyDropShort('mm', 1)) return 'yellow';
       return (it.somaria && it.lamp) ? 'green' : 'yellow';
 
     case 'tr':
@@ -1670,7 +1764,9 @@ function dungeonColor(key) {
         var _gtHCFound = isEntShuffleGT &&
           _gtConns.some(function(c) { return _gtHCNames[c[0]] || _gtHCNames[c[1]]; });
         var _gtDWDM = (it.gloves >= 1 && window.gloveClimbsDM()) || (it.flute >= 1 && lwVillage) || window.fluteToDDM();
-        if (!_gtHCFound && !_gtDWDM) return 'red';
+        // A found entrance labelled CT is the way in (entrance shuffle hides
+        // the vanilla marker, so this branch only ever answers for the label).
+        if (!isEntShuffleGT && !_gtHCFound && !_gtDWDM) return 'red';
         if (!it.lamp) return 'red';
         if (!(it.sword >= 1 || it.hammer || it.cape)) return 'red';
         if (shuffleSmallKeys()) {
@@ -1879,10 +1975,23 @@ function checkLogic(it) {
            // TR medallion (without owning all three) is red, not an optimistic
            // "maybe" yellow — medColor only returns yellow in that unknown case.
            var m=medColor('tr'); if(m==='red' || m==='yellow') return 'red';
+           // The walk through TR to the ledge you mirror from crosses two small
+           // key doors; with keys shuffled they have to be in hand (Chris, Oct
+           // 2026 — it read possible on one). Key Drop puts one more door in
+           // front, before Chain Chomps.
+           var _trKeysHeld4 = false;
+           if (shuffleSmallKeys()) {
+             var _trKd4 = !!(window.dngKeysShuffled && window.dngKeysShuffled('drop'));
+             if ((window.trackerItems.trSmallKeys || 0) < (_trKd4 ? 3 : 2)) return 'red';
+             _trKeysHeld4 = true;
+           }
            // No lamp/flute → dark-cave ascent on gloves = out of logic (purple).
-           // Otherwise missing firerod is a normal in-logic yellow.
            if (!DMlight) return worst(m,'purple');
-           return (!firerod) ? worst(m,'yellow') : worst(m,'green');
+           // The fire rod stands in for the keys: unshuffled, TR's keys sit in
+           // the Roller Room chests, which want it, so without it the keys may
+           // not be there — possible. With keys shuffled and enough of them in
+           // hand it has nothing left to do (Chris, Oct 2026).
+           return (!firerod && !_trKeysHeld4) ? worst(m,'yellow') : worst(m,'green');
          },
     5:   function() { return 'green'; },
     6:   function() { return bomb ? 'green' : 'red'; },
@@ -2696,7 +2805,7 @@ window.checkColorWith = function(id, extra) {
 };
 })();
 </script>
-<script src="js/dngpanel.js?v=1126c"></script>
+<script src="js/dngpanel.js?v=1127k"></script>
 <script src="js/entrances_data.js"></script>
 <script src="logic/ref_logic_entrances.js"></script>
 <script src="logic/ref_logic_entrances_owg.js"></script>
@@ -2725,7 +2834,7 @@ window.checkColorWith = function(id, extra) {
   if (set) window.logic_entrances = set;
 })();
 </script>
-<script src="logic/ent_logic.js"></script>
+<script src="logic/ent_logic.js?v=1120a"></script>
 <script>
 'use strict';
 
@@ -2987,7 +3096,8 @@ var dotById = {};
 // Sanctuary Grave's item IS the Escape Sewers (3) check — so that dot stays on
 // the map too, in its own place, rather than being hung off the grave entrance.
 var ONLYADKD_CHECK = 65;   // Bottle Merchant
-var ONLYADKD_EXTRA_CHECKS = { 96: 1 };   // Escape Sewers (3) — Sanctuary Grave
+var ONLYADKD_EXTRA_CHECKS = { 96: 1,     // Escape Sewers (3) — Sanctuary Grave
+                              103: 1 };  // Master Sword Pedestal (Chris, Oct 2026)
 function onlyAdkd() {
   try {
     return (new URLSearchParams(location.search).get('preset') ||
@@ -3718,7 +3828,8 @@ window._applyInvertedDungeons(_inverted);
       return window.dngStatusFromColor(window.checkColor(cid));
     }
     return window.dngStatusFromColor(
-      marker.classList.contains('ent-unavailable') ? 'red' : 'green');
+      marker.classList.contains('ent-unavailable') ? 'red' :
+      marker.classList.contains('ent-ool') ? 'purple' : 'green');
   };
 
   ENTRANCE_HIDES_CHECK.forEach(function(id) {
@@ -3751,7 +3862,10 @@ window._applyInvertedDungeons(_inverted);
       var dk = entDungeon();
       if (dk && window.showDungeonPanel) {
         m.removeAttribute('title');
-        window.showDungeonPanel(dk, m, e.name + ' \u2192 ');
+        // A label names the real dungeon; the card is keyed by marker, and in
+        // inverted the CT and GT markers trade places — so a "CT" label showed
+        // Ganon's Tower (Chris, Sep 2026). dngLogicalKey() is that swap.
+        window.showDungeonPanel(dngLogicalKey(dk), m, e.name + ' \u2192 ');
         return;
       }
       // OnlyADKD: a door whose interior still holds an item shows that
@@ -4787,6 +4901,21 @@ window._applyInvertedDungeons(_inverted);
   window.dpNorthLabelFound = dpNorthLabelFound;
 
   // Returns true if the entrance's logic requirements are NOT yet met.
+  // Entrances the logic calls unreachable that can still be got to out of
+  // logic. Asked only once entranceUnavailable() has said red; true turns the
+  // marker purple instead. Open world only — inverted keeps the plain rule.
+  var ENT_OOL = {
+    // Fake flippers onto the Lake Hylia island (Chris, Sep 2026).
+    'Capacity Upgrade':     function (t) { return true; },
+    // Same as the non-entrance-shuffle Waterfall Fairy check (105).
+    'Waterfall of Wishing': function (t) { return !!(t.boots || t.moonpearl); }
+  };
+  function entranceOutOfLogic(name) {
+    if (!ENT_OOL[name] || (window.trackerSettings && window.trackerSettings.inverted)) return false;
+    return ENT_OOL[name](window.trackerItems || {});
+  }
+  window.entranceOutOfLogic = entranceOutOfLogic;
+
   function entranceUnavailable(name) {
     // Don't flag anything red until we've received a real item-state snapshot
     // from the item tracker — avoids an all-red flash on page load/refresh
@@ -4873,7 +5002,10 @@ window._applyInvertedDungeons(_inverted);
       // DP North has an independent path via South West Dark World + mirror (Mire area
       // → mirror to desert). This must be checked BEFORE the glove gate below so that
       // adding a DP West connector doesn't block this already-valid Mire+mirror route.
-      if (name === 'Desert Palace Entrance (North)') {
+      // The mirror lands on the ledge both doors share, so West gets the same
+      // route — the reference logic gives it to both (Chris, Sep 2026: West was
+      // red where North was green, inverted 2.0 with flute + mitts + mirror).
+      {
         var _dpNIt = window.trackerItems || {};
         var _dpNSynth = window._entSyntheticFoundRegions || [];
         var _swDWReach = _dpNSynth.indexOf('South West Dark World') !== -1 ||
@@ -5105,7 +5237,8 @@ window._applyInvertedDungeons(_inverted);
     var dKeyForColor = code ? ENT_LABEL_TO_DUNGEON[code] : null;
     var dDefForColor = dKeyForColor ? DUNGEONS[dKeyForColor] : null;
     if (dDefForColor && !dDefForColor.cleared && !dDefForColor.fullyCleared && window.dungeonColor) {
-      var dColor = window.dungeonColor(dKeyForColor);
+      // dungeonColor() is keyed by marker too — see the hover above.
+      var dColor = window.dungeonColor(dngLogicalKey(dKeyForColor));
       if (DUNGEON_COLOR_HEX[dColor]) color = DUNGEON_COLOR_HEX[dColor];
     }
 
@@ -5234,7 +5367,9 @@ window._applyInvertedDungeons(_inverted);
       var _lj = window.trackerItems || {};
       if (!_lj.agahnim || !_lj.boots) showUnavail = true;
     }
-    marker.classList.toggle('ent-unavailable', showUnavail);
+    var showOol = showUnavail && entranceOutOfLogic(name);
+    marker.classList.toggle('ent-ool', showOol);
+    marker.classList.toggle('ent-unavailable', showUnavail && !showOol);
 
     // Show dungeon prize icon inside the box marker, if applicable
     var existingIcon = marker.querySelector('.ent-marker-prize');
@@ -5252,8 +5387,10 @@ window._applyInvertedDungeons(_inverted);
           existingIcon = document.createElement('img');
           existingIcon.className = 'ent-marker-prize';
           existingIcon.title = 'Right-click / ctrl-click to toggle dungeon cleared';
+          // Cmd-click; Ctrl-click arrives as the contextmenu below (see the
+          // click guard at the top of the page).
           existingIcon.addEventListener('click', function(ev) {
-            if (!ev.ctrlKey && !ev.metaKey) return;
+            if (!ev.metaKey) return;
             ev.stopPropagation();
             toggleDungeonCleared(dKey);
           });
@@ -5936,6 +6073,8 @@ window._applyInvertedDungeons(_inverted);
     });
     var legendEl = document.getElementById('legend');
     if (legendEl) legendEl.style.display = isEntranceShuffle ? 'none' : '';
+    var topbarEl = document.getElementById('topbar');
+    if (topbarEl) topbarEl.classList.toggle('ent-rows', isEntranceShuffle);
   }
 
   updateEntControlsVisibility();
@@ -7684,7 +7823,7 @@ function moveTip(e) {
 
 // ── Zoom + Layout ─────────────────────────────────────────────────────────────
 // Declare zoom state first so resizeWindowToMap can reference it
-var ZOOM_STEPS = [70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150];
+var ZOOM_STEPS = [50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120, 125, 130, 135, 140, 145, 150];
 var zoomIdx = 1;
 
 // Non-map chrome: topbar (~28px) + bottombar (~24px) + OS window chrome (~40px)
@@ -7711,20 +7850,24 @@ function resizeWindowToMap(initial) {
   // Only a nonsensical negative falls back.
   if (chromeW < 0) chromeW = 0;
   if (chromeH <= 0) chromeH = CHROME_H;
-  // If the map area is scrolling, its scrollbar is eating content width — add
-  // it back so the border stays even rather than losing a strip on the right.
-  var _mo = document.getElementById('maps-outer');
-  if (_mo) chromeW += Math.max(0, _mo.offsetWidth - _mo.clientWidth);
   // Measured, not estimated. The bars are read from the page because the bottom
   // one WRAPS to a second line on a narrow window (46px instead of 28px at
   // vertical 100%), and a fixed guess left the map 18px short of its bottom
   // border (Chris, Sep 2026). #maps-outer adds MAP_PAD on every side.
   var _tb = document.querySelector('#topbar'), _bb = document.querySelector('#bottombar');
-  var bars = (_tb ? Math.round(_tb.getBoundingClientRect().height) : 35) +
-             (_bb ? Math.round(_bb.getBoundingClientRect().height) : 28);
+  var bars = Math.ceil((_tb ? _tb.getBoundingClientRect().height : 35) +
+                       (_bb ? _bb.getBoundingClientRect().height : 28));
   var contentChrome = bars + MAP_PAD * 2;
   var w = (isVert ? size + MAP_PAD * 2 : size * 2 + MAP_GAP + MAP_PAD * 2) + chromeW;
   var h = (isVert ? size * 2 + MAP_GAP + contentChrome : size + contentChrome) + chromeH;
+  // If the map area will still scroll at this height (screen too short), its
+  // scrollbar eats content width — add it back so the border stays even. Only
+  // then: a scrollbar that this resize is about to remove made the window 15px
+  // too wide (Chris, Sep 2026).
+  var _mo = document.getElementById('maps-outer');
+  if (_mo && h > (window.screen.availHeight || Infinity)) {
+    w += Math.max(0, _mo.offsetWidth - _mo.clientWidth);
+  }
   // 6px, not 24: the bars are measured now, so a difference this size is a real
   // one worth correcting rather than estimate noise to be tolerated.
   if (initial && !_mapSizeSettled &&
@@ -7734,6 +7877,46 @@ function resizeWindowToMap(initial) {
   }
   _mapSizeSettled = true;
   try { window.resizeTo(w, h); } catch(e) {}
+}
+
+// A "|" separator that lands at the start or end of a wrapped row separates
+// nothing — hide it. visibility, not display, so hiding it can't re-wrap the bar.
+function hideEdgeSeparators() {
+  var tb = document.getElementById('topbar');
+  if (!tb) return;
+  var kids = Array.prototype.filter.call(tb.children, function (el) {
+    return el.offsetParent !== null || getComputedStyle(el).position === 'fixed';
+  });
+  kids.forEach(function (el, i) {
+    if (!el.classList.contains('tb-sep')) return;
+    var top = el.offsetTop, prev = kids[i - 1], next = kids[i + 1];
+    var edge = !prev || !next || prev.offsetTop + prev.offsetHeight <= top ||
+               next.offsetTop >= top + el.offsetHeight;
+    el.classList.toggle('row-edge', edge);
+  });
+}
+window.addEventListener('resize', hideEdgeSeparators);
+
+// The bars wrap to a second line when the window is narrow (vertical layout,
+// more so with entrance shuffle's buttons) and can change height after the
+// first measurement — refit the window whenever either one does, or the map
+// area comes up short and scrolls (Chris, Sep 2026).
+if (window.ResizeObserver) {
+  var _barH = {};
+  var _barRO = new ResizeObserver(function (entries) {
+    var changed = false;
+    entries.forEach(function (e) {
+      var h = Math.round(e.target.getBoundingClientRect().height);
+      if (_barH[e.target.id] !== h) changed = true;   // first report too
+      _barH[e.target.id] = h;
+    });
+    if (changed) resizeWindowToMap();
+    hideEdgeSeparators();
+  });
+  ['topbar', 'bottombar'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) _barRO.observe(el);
+  });
 }
 
 function setLayout(val, initial) {
@@ -8381,7 +8564,8 @@ if (document.readyState === 'loading') {
       if (typeof window.entranceUnavailable === 'function') {
         try { bad = !!window.entranceUnavailable(name); } catch (ex) { bad = false; }
       }
-      el.className = 'ent-marker retro-door ' + (bad ? 'ent-unavailable' : 'unconnected');
+      var ool = bad && typeof window.entranceOutOfLogic === 'function' && window.entranceOutOfLogic(name);
+      el.className = 'ent-marker retro-door ' + (ool ? 'retro-ool' : bad ? 'ent-unavailable' : 'unconnected');
     });
   }
   window.refreshRetroDoors = refreshRetroDoors;

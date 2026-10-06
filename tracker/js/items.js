@@ -126,7 +126,7 @@ let previousSRAM = null;
 // Bumped with every change to this file, relayed in the broadcast snapshot so
 // the map's gear menu can show which build the ITEM TRACKER is running — the
 // two windows are packaged together but reload independently.
-window.ITEMS_BUILD = '1126b';
+window.ITEMS_BUILD = '1126j';
 let _bombClearTimer = null; // debounce: only clear bombs after sustained 0 reading
 
 const items = {
@@ -2784,6 +2784,14 @@ function updateDungeonCountDisplay(dungeonKey) {
         }
         // Notify map of completion state change
         if (typeof broadcastPrizes === 'function') setTimeout(broadcastPrizes, 50);
+
+        // The box widths are measured, then pinned. A count that grows past
+        // what was measured ("0/12" at load, "12/12" later with key drop) ran
+        // out of the box — Mac's Arial most of all (Chris, Oct 2026). Re-measure
+        // whenever the content no longer fits.
+        if (slot.scrollWidth > slot.clientWidth + 1 && window.equalizeTopBoxes) {
+            window.equalizeTopBoxes();
+        }
     }
 }
 
@@ -2984,6 +2992,9 @@ function _broadcastItemSnapNow() {
     snap.deaths = parseInt((document.getElementById('toh-death-count')||{}).textContent||'0');
     snap.bonks  = parseInt((document.getElementById('toh-bonk-count') ||{}).textContent||'0');
     snap.raceMode = !!window._raceMode;
+    snap.currentDungeon = window._currentDungeon || null;
+    snap.currentFloor   = window._currentDungeon ? (window._currentFloor || null) : null;
+    snap.currentWorld   = window._currentWorld || null;
     window._itemsBc.postMessage({ type: 'items', data: snap });
     // Feed the read-only items REST API (Electron main process) if available.
     try {
@@ -3053,6 +3064,9 @@ function connectWebSocket() {
             _stopReconnect();
             // Fresh socket, fresh budget of fast device polls.
             _deviceRetryCount = 0;
+            // …and a fresh look at the ROM: it may be a different seed now.
+            forgetRomPrizes();
+            window.ROM_NAME = null; _romNameTries = 0;
             ws.send(JSON.stringify({ Opcode: 'DeviceList', Space: 'SNES' }));
         };
 
@@ -3066,6 +3080,7 @@ function connectWebSocket() {
 
         ws.onclose = () => {
             console.log('WebSocket disconnected');
+            window._currentWorld = null; if (window.setCurrentDungeon) window.setCurrentDungeon(null);
             updateConnectionStatus('Disconnected');
             deviceAttached = false;
             _gamemodeValid = false;
@@ -3207,6 +3222,29 @@ function _sramReadOnce() {
         Operands: ['F50010', '01']
     }));
 
+    // Which dungeon Link is in: $7E040C, 2 bytes so the reply's length
+    // (dispatched on in processSRAMData) can't be mistaken for the game mode.
+    ws.send(JSON.stringify({
+        Opcode: 'GetAddress',
+        Space: 'SNES',
+        Operands: ['F5040C', '02']
+    }));
+    // …and which floor of it: $7E00A4 (0 = 1F, 1 = 2F, 0xFF = B1, 0xFE = B2).
+    // 3 bytes, again only so the reply's length is one nothing else uses.
+    ws.send(JSON.stringify({
+        Opcode: 'GetAddress',
+        Space: 'SNES',
+        Operands: ['F500A4', '03']
+    }));
+    // …and which world: the overworld area, $7E008A — 0x40 and up is the Dark
+    // World ($7E007B flipped meaning between seeds, so it's not used).
+    // 4 bytes, once more for a reply length nothing else uses.
+    ws.send(JSON.stringify({
+        Opcode: 'GetAddress',
+        Space: 'SNES',
+        Operands: ['F5008A', '04']
+    }));
+
     // Read inventory data (0x1ae bytes from F5F340)
     ws.send(JSON.stringify({
         Opcode: 'GetAddress',
@@ -3240,7 +3278,9 @@ function _sramReadOnce() {
     // anything else = pendant). Same source the reference tracker uses. Read
     // once per connection and only a few times — a ROM that doesn't answer
     // (hardware without ROM reads, some forks) just leaves prizes manual.
-    if (!window.ROM_NAME && _romNameTries < 5) {
+    // Re-read every ~10 s even once known: a new seed loaded without
+    // reconnecting must not keep the last seed's prize table.
+    if ((!window.ROM_NAME && _romNameTries < 5) || (window.ROM_NAME && (++_romNameTick % 10) === 0)) {
         _romNameTries++;
         ws.send(JSON.stringify({ Opcode: 'GetAddress', Space: 'SNES',
             Operands: [ROM_NAME_ADDR.toString(16), ROM_NAME_LEN.toString(16)] }));
@@ -3248,7 +3288,7 @@ function _sramReadOnce() {
 
     if (!window._dungeonPrizeByKey && _romPrizeTries < 5) {
         _romPrizeTries++;
-        _romPrizeNums = null;
+        _romPrizeNums = _romPrizeTypes = null;
         ws.send(JSON.stringify({ Opcode: 'GetAddress', Space: 'SNES',
             Operands: [ROM_PRIZE_NUM_ADDR.toString(16), ROM_PRIZE_LEN.toString(16)] }));
         ws.send(JSON.stringify({ Opcode: 'GetAddress', Space: 'SNES',
@@ -3283,7 +3323,7 @@ function _sramReadOnce() {
 // (Chris, Sep 2026).
 const ROM_NAME_ADDR = 0x7fc0;
 const ROM_NAME_LEN  = 0x15;
-var _romNameTries = 0;
+var _romNameTries = 0, _romNameTick = 0;
 
 function processRomName(data) {
     var name = '';
@@ -3293,6 +3333,9 @@ function processRomName(data) {
         name += (c >= 32 && c < 127) ? String.fromCharCode(c) : '';
     }
     if (!name) return;
+    // Another seed under the same connection: its prizes are different.
+    if (window.ROM_NAME && window.ROM_NAME !== name) forgetRomPrizes();
+    if (window.ROM_NAME === name) return;
     window.ROM_NAME    = name;
     window.ROM_IS_DOOR = /^ER\d/.test(name);
     if (window.broadcastItemSnap) window.broadcastItemSnap();
@@ -3315,7 +3358,34 @@ const ROM_PRIZE_TYPE_ADDR = 0x180050;
 const ROM_PRIZE_LEN       = 0xd;
 const ROM_PRIZE_INDEX = { ep:0x2, dp:0x3, toh:0xa, pod:0x6, sp:0x5,
                           sw:0x8, tt:0xb, ip:0x9, mm:0x7, tr:0xc };
-var _romPrizeNums = null, _romPrizeTries = 0;
+var _romPrizeNums = null, _romPrizeTypes = null, _romPrizeTries = 0;
+
+// The two tables come back the same size, and a late answer from an earlier
+// try could pair one try's numbers with another's types, so the order isn't
+// something to rely on. Tell them apart by content instead:
+// the type table only ever holds 0x40 (crystal) or 0x00 (pendant), while the
+// number table always carries the pendants' 0x01/0x02/0x04 (Chris, Oct 2026:
+// a crystal turned red on collection).
+function isPrizeTypeTable(data) {
+    return Object.keys(ROM_PRIZE_INDEX).every(function (k) {
+        var v = data[ROM_PRIZE_INDEX[k]];
+        return v === 0x40 || v === 0x00;
+    });
+}
+function takePrizeTable(data) {
+    if (isPrizeTypeTable(data)) _romPrizeTypes = data; else _romPrizeNums = data;
+    if (_romPrizeNums && _romPrizeTypes) {
+        processPrizeTables(_romPrizeNums, _romPrizeTypes);
+        _romPrizeNums = _romPrizeTypes = null;
+    }
+}
+// A new seed (or a fresh connection): drop the table and let the boss-defeat
+// auto-mark run again once it is re-read.
+function forgetRomPrizes() {
+    window._dungeonPrizeByKey = null;
+    _romPrizeNums = _romPrizeTypes = null; _romPrizeTries = 0;
+    Object.keys(dungeons).forEach(function (k) { dungeons[k]._prizeAuto = false; });
+}
 
 function processPrizeTables(nums, types) {
     var map = {}, sane = false;
@@ -3356,10 +3426,74 @@ let previousRoomData = null;
 let roomChunk1 = null;        // first 0x280 chunk
 let roomChunk1Time = 0;       // timestamp when chunk1 was stored
 
+// ── Current dungeon ─────────────────────────────────────────────────────────
+// $7E040C holds the dungeon Link is in — an even ID, 0xFF on the overworld and
+// in ordinary caves. Published as `currentDungeon` (a tracker key, or null) in
+// both item snapshots, which feeds the REST API, the overlay WebSocket, the
+// broadcast view's dot and the one here (Chris, Oct 2026).
+const DUNGEON_ID_KEY = {
+    0x00: 'hc', 0x02: 'hc', 0x04: 'ep', 0x06: 'dp', 0x08: 'ct', 0x0A: 'sp',
+    0x0C: 'pod', 0x0E: 'mm', 0x10: 'sw', 0x12: 'ip', 0x14: 'toh', 0x16: 'tt',
+    0x18: 'tr', 0x1A: 'gt'
+};
+window._currentDungeon = null;
+function setCurrentDungeon(key) {
+    var changed = key !== window._currentDungeon;
+    window._currentDungeon = key;
+    // Re-applied on every read, not just on a change: the dungeon slots are
+    // rebuilt when the layout or dungeon-item mode changes, and a rebuilt
+    // slot would otherwise lose its dot until Link next moved.
+    document.querySelectorAll('[data-dungeon-key]').forEach(function (el) {
+        el.classList.toggle('dng-here', el.getAttribute('data-dungeon-key') === key);
+    });
+    if (changed && window.broadcastItemSnap) window.broadcastItemSnap();
+}
+function processDungeonId(id) {
+    // Menus, text boxes and transitions keep the last answer; the title and
+    // file-select screens mean nobody is anywhere.
+    if (GAMEPLAY_MODES.indexOf(_currentGamemode) === -1) {
+        if (_currentGamemode < 0x06) { window._currentWorld = null; setCurrentDungeon(null); }
+        return;
+    }
+    setCurrentDungeon(DUNGEON_ID_KEY[id] || null);
+}
+window.setCurrentDungeon = setCurrentDungeon;
+
+// The floor, as the game numbers it: 1F, 2F … above ground, B1, B2 … below.
+// Only meaningful while currentDungeon is set; published as currentFloor.
+window._currentFloor = null;
+// Light or Dark World ('lw' / 'dw'), from the overworld area $7E008A (keeps the
+// last area while in caves and dungeons) — for the map overlay's
+// overworld image (Chris, Oct 2026). Published as currentWorld.
+window._currentWorld = null;
+function processWorld(b) {
+    if (GAMEPLAY_MODES.indexOf(_currentGamemode) === -1) return;
+    var w = (b & 0x40) ? 'dw' : 'lw';   // areas 0x40–0x7F are the Dark World
+    if (w === window._currentWorld) return;
+    window._currentWorld = w;
+    if (window.broadcastItemSnap) window.broadcastItemSnap();
+}
+
+function processFloor(b) {
+    if (GAMEPLAY_MODES.indexOf(_currentGamemode) === -1) return;
+    var n = b > 127 ? b - 256 : b;
+    var f = n >= 0 ? (n + 1) + 'F' : 'B' + (-n);
+    if (!window._currentDungeon) f = null;
+    if (f === window._currentFloor) return;
+    window._currentFloor = f;
+    if (window.broadcastItemSnap) window.broadcastItemSnap();
+}
+
 function processSRAMData(data) {
     if (data.length === 0x01) {
         _currentGamemode = data[0];
         broadcastGamemode(data[0]);
+    } else if (data.length === 0x02) {
+        processDungeonId(data[0]);
+    } else if (data.length === 0x03) {
+        processFloor(data[0]);
+    } else if (data.length === 0x04) {
+        processWorld(data[0]);
     } else if (data.length === 0x1ae) {
         processInventoryData(data);
     } else if (data.length === 0x280) {
@@ -3384,9 +3518,7 @@ function processSRAMData(data) {
     } else if (data.length === ROM_NAME_LEN) {
         processRomName(data);
     } else if (data.length === ROM_PRIZE_LEN) {
-        // The two prize tables come back the same size and in the order asked.
-        if (!_romPrizeNums) _romPrizeNums = data;
-        else { processPrizeTables(_romPrizeNums, data); _romPrizeNums = null; }
+        takePrizeTable(data);
     } else if (data.length === 0x400 || data.length === 0x420 || data.length === 0x500) {
         processRoomData(data);
     }
@@ -3958,6 +4090,9 @@ function processInventoryData(data) {
         // Crystal count from trackerItems if available, else from items
         snap._itemsBuild = window.ITEMS_BUILD;   // the slim snap needs it as well,
                                                  // or the map's build line flickers
+        snap.currentDungeon = window._currentDungeon || null;   // both builders, or the dot flickers
+        snap.currentFloor   = window._currentDungeon ? (window._currentFloor || null) : null;
+        snap.currentWorld   = window._currentWorld || null;
         snap.crystals = (window.trackerItems && window.trackerItems.crystals) || 0;
         snap.mmMedallion = (window.trackerItems && window.trackerItems.mmMedallion) || 0;
         snap.trMedallion = (window.trackerItems && window.trackerItems.trMedallion) || 0;
@@ -4260,13 +4395,13 @@ function updateItemState(itemKey, state) {
 }
 
 function resetItemTracker() {
+    window._currentWorld = null; if (window.setCurrentDungeon) window.setCurrentDungeon(null);
     // Clear the hover panel's per-location marks (js/dngpanel.js owns the store)
     if (window.dngLocClearedReset) window.dngLocClearedReset();
     // …and the keys-found high-water marks: a new seed has its own.
     if (window.keysFoundReset) window.keysFoundReset();
     // A new game is a new seed: forget the ROM prize table and re-read it.
-    window._dungeonPrizeByKey = null; _romPrizeNums = null; _romPrizeTries = 0;
-    Object.keys(dungeons).forEach(function(k) { dungeons[k]._prizeAuto = false; });
+    forgetRomPrizes();
     // Reset all item states to default
     Object.keys(items).forEach(function(key) {
         items[key].currentState = 0;
@@ -4510,6 +4645,16 @@ window.addEventListener('storage', function(ev) {
     if (ev.key !== 'alttp-swordless') return;
     window.applySwordlessMode(ev.newValue === 'yes');
 });
+
+// macOS: Ctrl+click is the right-click. Chromium sends it as a contextmenu
+// AND an ordinary click, so every control with both a left- and right-click
+// action did both — right-clicking a prize to mark it collected also cycled it
+// one step on (crystal → red crystal, pendant → green pendant; Chris, Oct
+// 2026). The contextmenu handler is the one that means it, so the click is
+// swallowed before any element sees it.
+window.addEventListener('click', function (e) {
+  if (e.ctrlKey) { e.stopPropagation(); e.preventDefault(); }
+}, true);
 
 document.addEventListener('DOMContentLoaded', () => {
     try {

@@ -179,7 +179,14 @@ input:focus, select:focus { outline: none; border-color: #4dff88; }
   font-size: 11px; color: #666; text-transform: uppercase;
   letter-spacing: 0.5px; margin-bottom: 2px;
 }
-#preset-select { width: 100%; }
+#preset-select { flex: 1; min-width: 0; }
+.preset-select-row { display: flex; gap: 4px; }
+#preset-fav-btn {
+  flex: 0 0 auto; padding: 0 7px; font-size: 14px; line-height: 1; cursor: pointer;
+  background: #1a1a1a; color: #777; border: 1px solid #333; border-radius: 4px;
+}
+#preset-fav-btn.on { color: #ffd700; border-color: #5a5a1a; }
+#preset-fav-btn:disabled { opacity: .35; cursor: default; }
 /* The seed hash, rendered as the game's own five file-select icons. */
 #seed-link-status .seed-hash-icon  { height: 22px; width: auto; vertical-align: middle;
                                      margin-right: 2px; image-rendering: pixelated; }
@@ -341,6 +348,16 @@ input:focus, select:focus { outline: none; border-color: #4dff88; }
 }
 #check-update-btn:hover { background: #2a4a6a; }
 #check-update-btn:disabled { opacity: 0.5; cursor: default; }
+#apply-patch-btn {
+  flex: 1; padding: 6px 10px; font-size: 12px; cursor: pointer;
+  background: #1a2e1a; color: #7af59a;
+  border: 1px solid #2a7a4e; border-radius: 4px;
+  transition: background 0.15s;
+}
+#apply-patch-btn:hover { background: #24402a; }
+#apply-patch-btn:disabled { opacity: 0.5; cursor: default; }
+/* Two buttons share the row now — keep each label on one line. */
+#check-update-btn, #apply-patch-btn { white-space: nowrap; padding: 6px 6px; font-size: 11px; }
 #update-panel-status {
   font-size: 10px; color: #666; margin-top: 2px;
 }
@@ -395,6 +412,7 @@ input:focus, select:focus { outline: none; border-color: #4dff88; }
   <h4>App Settings</h4>
   <div class="app-settings-row">
     <button id="check-update-btn" onclick="manualCheckUpdate()">Check for Updates</button>
+    <button id="apply-patch-btn" onclick="applyPatch()" title="Apply a .trkpatch file">Apply Patch…</button>
   </div>
   <div id="update-panel-status"></div>
 
@@ -450,6 +468,10 @@ input:focus, select:focus { outline: none; border-color: #4dff88; }
   <div class="row">
     <label>Item Scale</label>
     <select id="item-scale">
+      <option value="0.5">50%</option>
+      <option value="0.55">55%</option>
+      <option value="0.6">60%</option>
+      <option value="0.65">65%</option>
       <option value="0.7">70%</option>
       <option value="0.75">75%</option>
       <option value="0.8">80%</option>
@@ -481,6 +503,10 @@ input:focus, select:focus { outline: none; border-color: #4dff88; }
   <div class="row">
     <label>Map Scale</label>
     <select id="map-zoom">
+      <option value="50">50%</option>
+      <option value="55">55%</option>
+      <option value="60">60%</option>
+      <option value="65">65%</option>
       <option value="70">70%</option>
       <option value="75">75%</option>
       <option value="80">80%</option>
@@ -697,6 +723,7 @@ input:focus, select:focus { outline: none; border-color: #4dff88; }
       </div>
       <div class="presets-col">
         <label class="presets-label">Preset</label>
+        <div class="preset-select-row">
         <select id="preset-select">
           <option value="" selected>— None —</option>
           <option value="lordseed">Lord Seed</option>
@@ -735,6 +762,8 @@ input:focus, select:focus { outline: none; border-color: #4dff88; }
           <option value="mcbossenemizer">MCBossEnemizer</option>
           <option value="crosskeys">CrossKeys</option>
         </select>
+        <button type="button" id="preset-fav-btn" onclick="togglePresetFavorite()" title="Favorite: keep this preset at the top of the list">&#9734;</button>
+        </div>
         <button type="button" class="preset-btn" id="preset-apply-btn" onclick="launchPreset()">Launch Preset</button>
         <button type="button" class="preset-btn preset-btn-save" id="preset-save-btn" onclick="saveCustomPreset()">Save Preset</button>
         <button type="button" class="preset-btn preset-btn-delete" id="preset-delete-btn" onclick="deleteCustomPreset()" style="display:none">Delete Preset</button>
@@ -2765,6 +2794,7 @@ function populatePresetDropdown() {
     opt.textContent = name;
     sel.appendChild(opt);
   });
+  orderPresetOptions();
 }
 
 function applyPreset() {
@@ -2835,6 +2865,7 @@ function presetModalConfirm() {
       sel.appendChild(opt);
     }
     sel.value = value;
+    orderPresetOptions();
   }
   updateDeleteBtn();
 }
@@ -2849,10 +2880,62 @@ function deleteCustomPreset() {
   var customPresets = loadCustomPresets();
   delete customPresets[name];
   saveCustomPresets(customPresets);
+  savePresetFavorites(loadPresetFavorites().filter(function (v) { return v !== val; }));
   var opt = sel.querySelector('option[value="' + val.replace(/"/g, '\\"') + '"]');
   if (opt) opt.remove();
   sel.selectedIndex = 0;
   updateDeleteBtn();
+}
+
+// ── Favorite presets: starred ones sit at the top of the list ──────────────
+// Stored as the option values, so built-ins and custom presets both work.
+var PRESET_FAV_KEY = 'alttp-preset-favorites';
+function loadPresetFavorites() {
+  try { return JSON.parse(localStorage.getItem(PRESET_FAV_KEY) || '[]'); }
+  catch (ex) { return []; }
+}
+function savePresetFavorites(favs) {
+  try { localStorage.setItem(PRESET_FAV_KEY, JSON.stringify(favs)); } catch (ex) {}
+}
+// Favorites move to just under "— None —", in the order they were starred;
+// everything else goes back to its original place.
+function orderPresetOptions() {
+  var sel = document.getElementById('preset-select');
+  if (!sel) return;
+  var favs = loadPresetFavorites();
+  var opts = Array.prototype.slice.call(sel.options);
+  opts.forEach(function (o, i) {
+    if (o.dataset.label === undefined) { o.dataset.label = o.textContent; o.dataset.pos = i; }
+    var fav = favs.indexOf(o.value) !== -1;
+    o.textContent = (fav ? '\u2605 ' : '') + o.dataset.label;
+  });
+  var none = opts.filter(function (o) { return !o.value; });
+  var starred = favs.map(function (v) { return opts.filter(function (o) { return o.value === v; })[0]; })
+                    .filter(Boolean);
+  var rest = opts.filter(function (o) { return o.value && favs.indexOf(o.value) === -1; })
+                 .sort(function (a, b) { return a.dataset.pos - b.dataset.pos; });
+  var cur = sel.value;
+  none.concat(starred, rest).forEach(function (o) { sel.appendChild(o); });
+  sel.value = cur;
+  updateFavBtn();
+}
+function togglePresetFavorite() {
+  var sel = document.getElementById('preset-select');
+  if (!sel || !sel.value) return;
+  var favs = loadPresetFavorites();
+  var i = favs.indexOf(sel.value);
+  if (i === -1) favs.push(sel.value); else favs.splice(i, 1);
+  savePresetFavorites(favs);
+  orderPresetOptions();
+}
+function updateFavBtn() {
+  var sel = document.getElementById('preset-select');
+  var btn = document.getElementById('preset-fav-btn');
+  if (!sel || !btn) return;
+  var on = !!sel.value && loadPresetFavorites().indexOf(sel.value) !== -1;
+  btn.disabled = !sel.value;
+  btn.classList.toggle('on', on);
+  btn.innerHTML = on ? '&#9733;' : '&#9734;';
 }
 
 function updateDeleteBtn() {
@@ -2860,6 +2943,7 @@ function updateDeleteBtn() {
   var btn = document.getElementById('preset-delete-btn');
   if (!sel || !btn) return;
   btn.style.display = (sel.value && sel.value.indexOf('custom:') === 0) ? '' : 'none';
+  updateFavBtn();
 }
 
 // Close modal on overlay click
@@ -2901,6 +2985,26 @@ function openUserGuide() {
   } else {
     window.open(USER_GUIDE_URL, '_blank');
   }
+}
+
+// Pick a .trkpatch and apply it (main.js does the work and offers a restart).
+// Only in the desktop app — a browser can't write the app's files.
+function applyPatch() {
+  if (!window.electronAPI || !window.electronAPI.applyPatch) return;
+  var status = document.getElementById('update-panel-status');
+  var btn = document.getElementById('apply-patch-btn');
+  btn.disabled = true;
+  window.electronAPI.applyPatch().then(function (r) {
+    btn.disabled = false;
+    if (!r || r.canceled) return;
+    status.textContent = !r.ok ? r.error
+      : r.upToDate ? 'Already up to date — nothing to patch.'
+      : ('Patch applied (' + r.count + ' files) — restart to load it.');
+    status.style.color = r.ok ? '#4dff88' : '#ff7777';
+  }, function (e) {
+    btn.disabled = false;
+    status.textContent = 'Patch failed: ' + e; status.style.color = '#ff7777';
+  });
 }
 
 function manualCheckUpdate() {

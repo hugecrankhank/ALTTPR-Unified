@@ -1116,3 +1116,14 @@ html.dfill-on[data-bg="white"] .dungeon-slot.prize-obtained {
     cursor: pointer; display: inline-flex; align-items: center; gap: 4px;
 }
 .its-file-btn:hover { border-color: #4dff88; color: #fff; }
+
+/* You-are-here dot: the dungeon Link is in right now ($7E040C). */
+/* Absolutely placed just right of the text, so the narrow pendant slots don't
+   wrap it onto a hidden second line. */
+/* Only with the setting on and Race Mode off (html.show-here-dot). */
+.show-here-dot .dng-here .dungeon-label { position: relative; }
+.show-here-dot .dng-here .dungeon-label::after {
+  content: ''; position: absolute; top: 50%; margin-top: -3px; margin-left: 1px;
+  width: 6px; height: 6px; z-index: 3;   /* over the map/compass icons beside a pendant label */
+  border-radius: 50%; background: #4dff88; box-shadow: 0 0 4px #4dff88;
+}
