@@ -63,7 +63,9 @@
 <header>
   <h1>ALTTPR <span>Unified</span></h1>
   <label class="filebtn primary" for="rom-input">Load ROM…</label>
-  <input type="file" id="rom-input" accept=".sfc,.smc,.bin">
+  <!-- No `accept` filter: iOS doesn't know the .sfc/.smc types and would gray
+       the files out. The ROM is checked in JS after it's picked instead. -->
+  <input type="file" id="rom-input">
   <label class="ctl">World
     <select id="gamemode">
       <option value="open">Open</option>
@@ -169,6 +171,15 @@
     var file = ev.target.files && ev.target.files[0];
     if (!file) return;
     var bytes = new Uint8Array(await file.arrayBuffer());
+    ev.target.value = '';   // allow picking the same file again later
+    var body = bytes.length % 1024 === 512 ? bytes.length - 512 : bytes.length;
+    if (/\.zip$/i.test(file.name) || (bytes[0] === 0x50 && bytes[1] === 0x4B)) {
+      alert('That looks like a .zip file. Unzip it first and load the .sfc inside.');
+      return;
+    }
+    if (body < 0x80000 || body > 0x800000 || body % 0x8000 !== 0) {
+      if (!confirm('"' + file.name + '" doesn\'t look like a SNES ROM. Load it anyway?')) return;
+    }
     if (window.EJS_emulator) {
       // EmulatorJS doesn't support swapping games in place; reload with the
       // new file is simplest. Stash it so the reload can pick it up.
